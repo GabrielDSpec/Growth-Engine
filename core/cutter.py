@@ -27,7 +27,10 @@ def _montar_prompt(transcricao_texto, duracao_total_seg, segmentos, tentativa, c
     Nunca invente falas, timestamps ou segmentos apenas para atingir a quantidade.
     Os cortes já aceitos nesta execução: {len(cortes_atuais)}. Esta é a rodada {tentativa} de {MAX_TENTATIVAS_QWEN}.
     Escolha somente segmentos existentes na transcrição numerada. Retorne segmento_inicio e segmento_fim
-    como índices inclusivos; não invente timestamps. O código calculará os tempos reais.
+    como índices inteiros inclusivos copiados exatamente da numeração; não invente índices nem timestamps.
+    O trecho deve ser uma sequência contínua de segmentos e a diferença entre o primeiro início e o último fim
+    precisa ficar entre {duracao_minima} e {duracao_maxima} segundos. Nunca selecione apenas um segmento curto
+    para depois tentar completar a duração com texto inventado.
     Para cada corte, crie um título em pt-BR com no máximo 55 caracteres.
     O título deve usar uma palavra-chave ou entidade realmente presente no trecho, deixar claro o conflito,
     descoberta ou resultado, e despertar curiosidade sem clickbait. Não use #shorts, emojis ou afirmações ausentes.
@@ -45,7 +48,8 @@ def _montar_prompt(transcricao_texto, duracao_total_seg, segmentos, tentativa, c
         Não use retenção, CTR ou alcance como se fossem medidos; esses dados só existem após publicação.
     Analise a transcrição segmentada ({duracao_total_seg:.1f}s):
     {transcricao_texto}
-        Retorne EXCLUSIVAMENTE um objeto JSON puro, sem markdown:
+        Retorne EXCLUSIVAMENTE um objeto JSON puro, sem markdown, sem comentários e sem texto antes ou depois.
+        A chave cortes deve sempre ser uma lista; se houver material, nunca a deixe vazia.
         {{
             "cortes": [{{
             "titulo": "título factual e específico",
@@ -104,12 +108,10 @@ def _candidatos_para_revisao(candidatos, segmentos, duracao_total_seg, duracao_m
     for candidato in candidatos:
         if not isinstance(candidato, dict):
             continue
-        try:
-            inicio_indice = int(candidato.get("segmento_inicio"))
-            fim_indice = int(candidato.get("segmento_fim"))
-            selecionados = [segmento for segmento in segmentos if inicio_indice <= segmento["indice"] <= fim_indice]
-        except (TypeError, ValueError):
+        intervalo = _selecionar_segmentos_candidato(candidato, segmentos)
+        if not intervalo:
             continue
+        inicio_indice, fim_indice, selecionados = intervalo
         if not selecionados:
             continue
         inicio = selecionados[0]["inicio"]
@@ -140,15 +142,74 @@ def _candidatos_para_revisao(candidatos, segmentos, duracao_total_seg, duracao_m
     return revisao
 
 
+def _selecionar_segmentos_candidato(candidato, segmentos):
+    """Aceita o contrato preferido por índices e tolera timestamps produzidos pelo modelo."""
+    try:
+        inicio_indice = int(candidato.get("segmento_inicio"))
+        fim_indice = int(candidato.get("segmento_fim"))
+        selecionados = [segmento for segmento in segmentos if inicio_indice <= segmento["indice"] <= fim_indice]
+        if selecionados:
+            return inicio_indice, fim_indice, selecionados
+    except (TypeError, ValueError):
+        pass
+    try:
+        inicio = float(candidato.get("inicio"))
+        fim = float(candidato.get("fim"))
+    except (TypeError, ValueError):
+        return None
+    selecionados = [segmento for segmento in segmentos if segmento["fim"] > inicio and segmento["inicio"] < fim]
+    if not selecionados:
+        return None
+    return selecionados[0]["indice"], selecionados[-1]["indice"], selecionados
+
+
+def _candidatos_fallback(segmentos, duracao_total_seg, duracao_minima, duracao_maxima):
+    """Cria trechos reais para revisão humana quando a saída da IA não é utilizável."""
+    if not segmentos or duracao_minima <= 0 or duracao_maxima < duracao_minima:
+        return []
+    candidatos = []
+    inicio_pos = 0
+    while inicio_pos < len(segmentos) and len(candidatos) < MAX_CORTES_SOLICITADOS:
+        inicio = segmentos[inicio_pos]["inicio"]
+        fim_pos = inicio_pos
+        while fim_pos + 1 < len(segmentos) and segmentos[fim_pos]["fim"] - inicio < duracao_minima:
+            fim_pos += 1
+        fim = segmentos[fim_pos]["fim"]
+        if fim - inicio <= duracao_maxima and fim <= duracao_total_seg:
+            trecho = segmentos[inicio_pos:fim_pos + 1]
+            texto = " ".join(item["texto"] for item in trecho).strip()
+            candidatos.append({
+                "titulo": f"Trecho para revisar {len(candidatos) + 1:02d}",
+                "inicio": inicio,
+                "fim": fim,
+                "segmento_inicio": trecho[0]["indice"],
+                "segmento_fim": trecho[-1]["indice"],
+                "gancho": trecho[0]["texto"],
+                "promessa": texto[:240],
+                "virada": trecho[len(trecho) // 2]["texto"],
+                "conclusao": trecho[-1]["texto"],
+                "score_vaca_roxa": 0,
+                "pontuacoes": {},
+                "revisao_humana": True,
+                "fallback_transcricao": True,
+            })
+            inicio_pos = max(fim_pos + 1, inicio_pos + 1)
+        else:
+            inicio_pos += 1
+    return candidatos
+
+
 def gerar_cortes_com_retry(transcricao_texto, duracao_total_seg, segmentos=None,
                            minimo=MIN_CORTES_PADRAO, max_tentativas=MAX_TENTATIVAS_QWEN,
-                           duracao_minima=10, duracao_maxima=90):
+                           duracao_minima=10, duracao_maxima=90, progress_callback=None):
     aceitos = []
     candidatos_gerados = []
     candidatos_brutos = []
     diagnostico = []
     rejeicoes = []
     for tentativa in range(1, max_tentativas + 1):
+        if progress_callback:
+            progress_callback(tentativa, max_tentativas, "analisando", {"candidatos": len(candidatos_gerados)})
         prompt = _montar_prompt(transcricao_texto, duracao_total_seg, segmentos, tentativa, aceitos, rejeicoes, duracao_minima, duracao_maxima)
         rodada = {"tentativa": tentativa, "candidatos": 0, "aceitos": 0, "status": "ok"}
         try:
@@ -173,6 +234,8 @@ def gerar_cortes_com_retry(transcricao_texto, duracao_total_seg, segmentos=None,
                 recomendados = [corte for corte in novos if corte.get("score_vaca_roxa", 0) >= 70]
                 aceitos = _deduplicar_cortes(aceitos + recomendados)
                 rodada.update({"candidatos": len(candidatos), "validos_estruturais": len(novos), "aceitos": len(recomendados)})
+                if progress_callback:
+                    progress_callback(tentativa, max_tentativas, "validando", {"candidatos": len(candidatos), "validos": len(novos), "aceitos": len(recomendados)})
                 if len(novos) < len(candidatos):
                     rejeicoes.append(f"rodada {tentativa}: {len(candidatos) - len(novos)} candidato(s) invalido(s) ou duplicado(s)")
         except json.JSONDecodeError:
@@ -188,6 +251,8 @@ def gerar_cortes_com_retry(transcricao_texto, duracao_total_seg, segmentos=None,
         if len(aceitos) >= minimo:
             return {"status": "completed", "cortes": aceitos[:max(minimo, MAX_CORTES_SOLICITADOS)], "candidatos": candidatos_gerados, "diagnostico": diagnostico, "rejeicoes": rejeicoes}
     revisao = candidatos_gerados or _candidatos_para_revisao(candidatos_brutos, segmentos, duracao_total_seg, duracao_minima, duracao_maxima)
+    if not revisao:
+        revisao = _candidatos_fallback(segmentos, duracao_total_seg, duracao_minima, duracao_maxima)
     return {"status": "needs_review", "cortes": aceitos, "candidatos": revisao, "diagnostico": diagnostico, "rejeicoes": rejeicoes, "minimo": minimo}
 
 
@@ -221,6 +286,18 @@ def _garimpar_vacas_roxas_uma_rodada_legacy(transcricao_texto, duracao_total_seg
 
 def _texto_normalizado(texto):
     return re.sub(r"[^a-z0-9áéíóúâêôãõç ]", " ", (texto or "").lower())
+
+
+def _evidencia_presente(gancho, texto):
+    gancho_normalizado = _texto_normalizado(gancho)
+    texto_normalizado = _texto_normalizado(texto)
+    if gancho_normalizado in texto_normalizado:
+        return True
+    palavras = {palavra for palavra in gancho_normalizado.split() if len(palavra) >= 4}
+    if not palavras:
+        return False
+    presentes = sum(1 for palavra in palavras if palavra in texto_normalizado.split())
+    return presentes / len(palavras) >= 0.6
 
 
 def calcular_score_corte(pontuacoes):
@@ -276,18 +353,14 @@ def validar_cortes(cortes, duracao_total_seg, segmentos=None, score_minimo=70, d
         if score is None or not 0 <= score <= 100 or score < score_minimo:
             continue
         if segmentos:
-            try:
-                segmento_inicio = int(segmento_inicio)
-                segmento_fim = int(segmento_fim)
-                selecionados = [s for s in segmentos if segmento_inicio <= s["indice"] <= segmento_fim]
-            except (TypeError, ValueError):
+            intervalo = _selecionar_segmentos_candidato(corte, segmentos)
+            if not intervalo:
                 continue
-            if not selecionados or segmento_inicio > segmento_fim:
-                continue
+            segmento_inicio, segmento_fim, selecionados = intervalo
             inicio = selecionados[0]["inicio"]
             fim = selecionados[-1]["fim"]
             texto_selecionado = " ".join(s["texto"] for s in selecionados)
-            if _texto_normalizado(gancho) not in _texto_normalizado(texto_selecionado):
+            if not _evidencia_presente(gancho, texto_selecionado):
                 continue
         else:
             try:

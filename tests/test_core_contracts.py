@@ -130,6 +130,22 @@ class CoreContractsTests(unittest.TestCase):
         self.assertEqual(len(preserved), 1)
         self.assertEqual(preserved[0]["score_vaca_roxa"], 60)
 
+    def test_cutter_accepts_evidence_with_small_wording_variation(self):
+        candidate = {
+            "titulo": "Descoberta editorial válida",
+            "segmento_inicio": 0,
+            "segmento_fim": 0,
+            "gancho": "descoberta importante muda tudo",
+            "promessa": "a ideia principal",
+            "virada": "o contraste aparece",
+            "conclusao": "a ideia se fecha",
+            "autossuficiente": True,
+            "promocional": False,
+            "pontuacoes": {chave: 100 for chave in ("distintividade", "gancho", "clareza_promessa", "autossuficiencia", "compartilhabilidade", "evidencia")},
+        }
+        segments = [{"indice": 0, "inicio": 0, "fim": 20, "texto": "Essa descoberta realmente importante mudou tudo para nós"}]
+        self.assertEqual(len(validar_cortes([candidate], 20, segments)), 1)
+
     def test_radar_has_search_and_primary_rss_sources(self):
         sources = _rss_source_urls("eventos São Paulo", include_primary=True, topic="Viagem ao litoral")
         providers = {provider for provider, _ in sources}

@@ -31,6 +31,9 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [ ] Criar botão 'Forçar Download/Recorte' para baixar vídeos sob demanda via `yt-dlp` e gerar novos cortes ignorando o cache existente.
 - [ ] **Transcrição local acelerada e observável:** executar `large-v3` na AMD Radeon RX 9060 XT usando backend compatível, como Vulkan/whisper.cpp ou HIP/ROCm, tornar modelo e compute type configuráveis e exibir etapa real, tempo decorrido, velocidade, ETA e segmentos processados; proposta em [`docs/backlog/features/F3-transcricao-gpu.md`](docs/backlog/features/F3-transcricao-gpu.md).
 - [ ] **Transcrição concluída não aparece nos cortes:** incluir uploads locais nas fontes, distinguir texto sem segmentos de transcrição pronta para cortes e carregar automaticamente a transcrição do primeiro vídeo; registro em [`docs/backlog/bugs/BUG-transcricao-nao-atualiza-cortes.md`](docs/backlog/bugs/BUG-transcricao-nao-atualiza-cortes.md).
+- [x] **Curadoria humana de cortes:** candidatos renderizados aparecem em cards com player, título, score, duração, download, exclusão, seleção e agendamento; candidatos abaixo do limiar continuam disponíveis para aprovação humana.
+- [x] **Análise de conteúdo observável:** o job exibe progresso por rodada da IA, quantidade de candidatos recebidos e válidos, separando aprovação automática de revisão humana.
+- [x] **Fallback de cortes:** quando a resposta do Qwen não atende ao contrato, o pipeline cria janelas contíguas ancoradas na transcrição dentro da faixa escolhida para evitar a tela vazia.
 
 ### E3. Automação de agendamento e publicação
 

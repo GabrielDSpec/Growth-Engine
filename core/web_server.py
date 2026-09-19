@@ -557,9 +557,17 @@ def _run_cut_job(job_id, video_id, perfil_id, duracao_minima=30, duracao_maxima=
             f"[{segment['indice']}] {segment['inicio']:.3f}-{segment['fim']:.3f}: {segment['texto']}"
             for segment in segments
         )
-        _update_runtime_job(CUT_JOBS, job_id, perfil_id, progress=30, message="Qwen analisando segmentos reais")
+        def update_analysis_progress(attempt, total_attempts, phase, details):
+            progress = min(75, 35 + round((attempt - 1) / max(total_attempts, 1) * 35))
+            if phase == "validando":
+                message = f"IA analisando conteúdo · rodada {attempt}/{total_attempts} · {details.get('candidatos', 0)} candidatos, {details.get('validos', 0)} válidos"
+            else:
+                message = f"IA analisando conteúdo · rodada {attempt}/{total_attempts}"
+            _update_runtime_job(CUT_JOBS, job_id, perfil_id, progress=progress, message=message, analysis_round=attempt, analysis_total=total_attempts, **details)
+
+        _update_runtime_job(CUT_JOBS, job_id, perfil_id, progress=30, message="IA analisando conteúdo · preparando contexto")
         _raise_if_cancelled(job_id)
-        analysis = gerar_cortes_com_retry(segmented_text, duration, segments, duracao_minima=duracao_minima, duracao_maxima=duracao_maxima)
+        analysis = gerar_cortes_com_retry(segmented_text, duration, segments, duracao_minima=duracao_minima, duracao_maxima=duracao_maxima, progress_callback=update_analysis_progress)
         _raise_if_cancelled(job_id)
         suggestions = analysis["cortes"]
         conn = get_connection()
@@ -597,7 +605,7 @@ def _run_cut_job(job_id, video_id, perfil_id, duracao_minima=30, duracao_maxima=
                     update_cut(cut_id, status="falhou", error=str(error), perfil_id=perfil_id)
                     candidate_status = "falhou"
                 persisted_candidates.append({**candidate, "cut_id": cut_id, "status": candidate_status, "output_path": output_path if candidate_status == "concluido" else "", "nome_rodada": round_name, "video_titulo": video_title})
-            message = f"Revisão necessária: {len(suggestions)} de 9 cortes recomendados; {len(persisted_candidates)} candidato(s) renderizado(s) para avaliação humana."
+            message = f"Revisão humana: {len(persisted_candidates)} candidato(s) renderizado(s); {len(suggestions)} aprovado(s) automaticamente pela IA."
             result = {"analysis": analysis, "cortes": persisted_candidates}
             _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="needs_review", progress=100, message=message, video_id=video_id, suggestions=persisted_candidates, diagnostics=analysis)
             update_job(job_id, status="needs_review", progress=100, message=message, result=json.dumps(result, ensure_ascii=False), perfil_id=perfil_id)
@@ -1296,6 +1304,39 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                 self._send_json({"deleted": cut_id})
             except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
                 self._send_json({"error": f"Exclusão inválida: {error}"}, status=400)
+            return
+        if parsed.path == "/api/cuts/schedule":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(length) or b"{}")
+                cut_id = int(body.get("cut_id"))
+                date = str(body.get("date") or "").strip()
+                slot = str(body.get("time") or "").strip()
+                if not date or not slot:
+                    self._send_json({"error": "Data e horário são obrigatórios."}, status=400)
+                    return
+                cut = next((item for item in list_cuts(perfil_id=self.request_profile_id) if item["id"] == cut_id), None)
+                if not cut or cut.get("status") != "concluido" or not cut.get("caminho_saida"):
+                    self._send_json({"error": "O corte precisa estar renderizado antes do agendamento."}, status=400)
+                    return
+                init_db()
+                conn = get_connection()
+                try:
+                    conn.execute("""
+                        INSERT INTO videos_historico
+                        (video_id, titulo, tipo, status, data_publicacao, slot_hora, arquivo_origem, perfil_id, atualizado_em)
+                        VALUES (?, ?, 'short', 'programado', ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        ON CONFLICT(video_id) DO UPDATE SET
+                            titulo=excluded.titulo, status='programado', data_publicacao=excluded.data_publicacao,
+                            slot_hora=excluded.slot_hora, arquivo_origem=excluded.arquivo_origem,
+                            perfil_id=excluded.perfil_id, atualizado_em=CURRENT_TIMESTAMP
+                    """, (f"cut-{cut_id}", cut.get("titulo") or f"Corte {cut_id}", date, slot, cut["caminho_saida"], self.request_profile_id))
+                    conn.commit()
+                finally:
+                    conn.close()
+                self._send_json({"scheduled": cut_id, "date": date, "time": slot})
+            except (ValueError, TypeError, json.JSONDecodeError) as error:
+                self._send_json({"error": f"Agendamento inválido: {error}"}, status=400)
             return
         if parsed.path == "/api/cuts/render-selected":
             try:

@@ -905,6 +905,23 @@ async function deleteCut(cutId) {
     showToast(error.message);
   }
 }
+async function scheduleCut(cutId) {
+  const date = window.prompt('Data de publicação (AAAA-MM-DD):', new Date().toISOString().slice(0, 10));
+  if (!date) return;
+  const time = window.prompt('Horário de publicação (HH:MM):', '17:30');
+  if (!time) return;
+  try {
+    const response = await fetch('/api/cuts/schedule', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cut_id: cutId, date, time }) });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível agendar o corte.');
+    showToast(`Corte agendado para ${payload.date} às ${payload.time}.`);
+    await loadScheduled();
+    await reloadSelectedCutData();
+    renderCuts();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
 async function renderSelectedCuts() {
   const cutIds = [...selectedCandidateIds];
   if (!cutIds.length) return showToast('Selecione pelo menos um candidato para renderizar.');
@@ -921,6 +938,41 @@ async function renderSelectedCuts() {
   } catch (error) {
     showToast(error.message);
   }
+}
+function renderCutCard(cut, options = {}) {
+  const cutId = Number(cut.cut_id || cut.id);
+  const status = cut.status || 'candidato';
+  const outputAvailable = status === 'concluido' && (cut.output_path || cut.caminho_saida);
+  const canSelect = ['candidato', 'concluido', 'selecionado'].includes(status);
+  const card = createElement('article', { className: `cut-card ${options.candidate ? 'candidate-row' : ''}` });
+  const header = createElement('div', { className: 'cut-card-header' }, [
+    domText('span', 'cut-status', options.statusLabel || (status === 'concluido' ? 'Renderizado' : 'Para revisar')),
+    domText('span', 'score-meter', `Score ${Number(cut.score_vaca_roxa || 0).toFixed(0)}/100`),
+  ]);
+  card.appendChild(header);
+  card.appendChild(domText('h3', '', cut.titulo || 'Corte sem título'));
+  card.appendChild(domText('p', 'cut-card-meta', `${Number(cut.inicio ?? cut.inicio_segundos ?? 0).toFixed(1)}s — ${Number(cut.fim ?? cut.fim_segundos ?? 0).toFixed(1)}s · ${cut.video_titulo || selectedCutSource?.title || 'Vídeo fonte'}`));
+  if (outputAvailable) {
+    const video = createElement('video', { className: 'cut-player', controls: 'true', preload: 'metadata' });
+    video.src = `/api/cuts/file?id=${encodeURIComponent(cutId)}`;
+    video.setAttribute('aria-label', `Prévia de ${cut.titulo || 'corte'}`);
+    card.appendChild(video);
+  } else if (status === 'falhou') {
+    card.appendChild(domText('p', 'cut-error', cut.erro || cut.error || 'A renderização falhou.'));
+  }
+  card.appendChild(domText('p', 'cut-card-copy', cut.gancho || 'Trecho ancorado na transcrição para avaliação humana.'));
+  const actions = createElement('div', { className: 'cut-card-actions' });
+  if (canSelect) actions.appendChild(createElement('label', { className: 'cut-select' }, [createElement('input', { type: 'checkbox', checked: selectedCandidateIds.has(cutId) ? 'true' : null, 'data-action': options.toggleAction || 'candidate-toggle', 'data-cut-id': cutId }), ' Selecionar para postagem']));
+  if (outputAvailable) {
+    const download = setSafeLink(createElement('a', { className: 'button secondary' }), `/api/cuts/file?id=${encodeURIComponent(cutId)}`);
+    download.setAttribute('download', `${(cut.titulo || 'corte').replace(/[^a-z0-9]+/gi, '_')}.mp4`);
+    download.append(domIcon('download'), ' Baixar MP4');
+    actions.appendChild(download);
+    actions.appendChild(domButton('Agendar postagem', 'calendar-plus', 'secondary', 'schedule-cut', { 'data-cut-id': cutId }));
+  }
+  if (canSelect || outputAvailable) actions.appendChild(domButton('Excluir', 'trash-2', 'danger', 'delete-cut', { 'data-cut-id': cutId }));
+  card.appendChild(actions);
+  return card;
 }
 async function runTranscription() {
   if (!selectedCutSource) return showToast('Selecione um vídeo longo primeiro.');
@@ -1112,6 +1164,9 @@ function isLiveJob(job) {
 }
 function renderJobProgress(job) {
   const telemetry = [
+    Number.isFinite(Number(job.analysis_round)) ? `Rodada IA: ${job.analysis_round}/${job.analysis_total || 3}` : '',
+    Number.isFinite(Number(job.candidatos)) ? `Candidatos: ${job.candidatos}` : '',
+    Number.isFinite(Number(job.validos)) ? `Válidos: ${job.validos}` : '',
     job.stage ? `Etapa: ${job.stage}` : '',
     job.device ? `Dispositivo: ${job.device}${job.fallback_reason ? ` (${job.fallback_reason})` : ''}` : '',
     Number.isFinite(Number(job.elapsed_seconds)) ? `Tempo: ${formatElapsedSeconds(job.elapsed_seconds)}` : '',
@@ -1168,26 +1223,7 @@ function renderCuts() {
   const statusLabel = { pendente: 'Pendente', candidato: 'Para revisar', renderizando: 'Renderizando', concluido: 'Renderizado', falhou: 'Falhou', excluido: 'Excluído' };
   persistedCuts.forEach(cut => {
     const status = cut.status || 'pendente';
-    const canSelect = ['candidato', 'concluido', 'selecionado'].includes(status);
-    const checkbox = canSelect ? createElement('input', { type: 'checkbox', checked: selectedCandidateIds.has(cut.id) ? 'true' : null, 'data-action': 'candidate-toggle', 'data-cut-id': cut.id, 'aria-label': `Selecionar ${cut.titulo || 'corte'}` }) : null;
-    const row = createElement('div', { className: 'evidence-row' }, [
-      checkbox,
-      createElement('span', { className: `cut-status cut-status-${status}`, textContent: statusLabel[status] || status }),
-      createElement('p', {}, [
-        domText('strong', '', cut.titulo || 'Corte sem título'),
-        document.createElement('br'),
-        domText('span', '', `Score ${cut.score_vaca_roxa || 0}/100 · ${cut.inicio_segundos}s — ${cut.fim_segundos}s`),
-        document.createElement('br'),
-        domText('span', '', `Gancho: ${cut.gancho || 'não informado'} · Promessa: ${cut.promessa || 'não informada'}`),
-      ]),
-    ]);
-    if (status === 'concluido') {
-      const link = setSafeLink(createElement('a'), `/api/cuts/file?id=${encodeURIComponent(cut.id)}`);
-      link.append('Abrir MP4 ', domIcon('arrow-up-right'));
-      row.appendChild(link);
-    }
-    if (canSelect) row.appendChild(domButton('Excluir', 'trash-2', 'danger', 'delete-cut', { 'data-cut-id': cut.id }));
-    persistedList.appendChild(row);
+    persistedList.appendChild(renderCutCard(cut, { statusLabel: statusLabel[status] || status }));
   });
   if (!persistedCuts.length) persistedList.appendChild(domText('p', 'empty-state', 'Nenhum corte persistido ainda.'));
   persistedPanel.appendChild(persistedList);
@@ -1200,9 +1236,9 @@ function renderCuts() {
       const accepted = analysis?.cortes?.length || 0;
       const detail = rounds.map(round => `Rodada ${round.tentativa}: ${round.aceitos || 0} aceitos de ${round.candidatos || 0}`).join(' · ');
       root.appendChild(createElement('div', { className: 'panel task-review-details' }, [
-        domText('strong', '', `Foram encontrados ${accepted} de 9 cortes válidos.`),
+        domText('strong', '', `${accepted} corte(s) aprovado(s) automaticamente pela IA.`),
         domText('p', '', detail || 'O diagnóstico desta execução não possui detalhes de rodada.'),
-        domText('p', '', 'O vídeo e a transcrição permanecem disponíveis para uma nova revisão.'),
+        domText('p', '', 'Os candidatos renderizados aparecem abaixo para aprovação humana, mesmo quando a IA não atinge a meta de 9 aprovados.'),
       ]));
   }
   const review = createElement('section', { className: 'panel cut-review' }, [domPanelHeader('Preparação da análise', 'Confirme a fonte e a faixa antes de pedir sugestões à IA')]);
@@ -1224,18 +1260,11 @@ function renderCuts() {
   body.appendChild(actions);
   if (cutSuggestions.length) {
     const suggestions = createElement('div', { className: 'suggestion-list' });
+    const candidateToggleAction = 'candidate-toggle';
     cutSuggestions.forEach((cut, index) => {
-      const isCandidate = Boolean(cut.nome_rodada) || cut.status === 'candidato' || cut.status === 'selecionado';
-      const checkbox = isCandidate ? createElement('input', { type: 'checkbox', checked: selectedCandidateIds.has(cut.cut_id) ? 'true' : null, 'data-action': 'candidate-toggle', 'data-cut-id': cut.cut_id, 'aria-label': `Selecionar ${cut.titulo}` }) : null;
-      const rangeLabel = isCandidate ? (cut.nome_rodada || 'Candidato') : `Corte ${String(index + 1).padStart(2, '0')}`;
-      const evidence = createElement('p', {}, [domText('span', 'score-meter', `Score ${cut.score_vaca_roxa}/100`), document.createElement('br'), domText('strong', '', cut.titulo), document.createElement('br'), domText('span', '', cut.gancho)]);
-      const row = createElement('div', { className: `evidence-row ${isCandidate ? 'candidate-row' : ''}` }, [checkbox, domText('span', '', `${rangeLabel} · ${Number(cut.inicio).toFixed(1)}s — ${Number(cut.fim).toFixed(1)}s`), evidence]);
-      if (cut.output_path || cut.caminho_saida) {
-        const link = setSafeLink(createElement('a'), `/api/cuts/file?id=${encodeURIComponent(cut.cut_id || cut.id)}`);
-        link.append('Abrir MP4 ', domIcon('arrow-up-right'));
-        row.appendChild(link);
-      }
-      suggestions.appendChild(row);
+      const candidateTitle = cut.titulo;
+      const candidateHook = cut.gancho;
+      suggestions.appendChild(renderCutCard({ ...cut, titulo: candidateTitle, gancho: candidateHook }, { candidate: true, toggleAction: candidateToggleAction, statusLabel: cut.status === 'concluido' ? 'Renderizado' : `Candidato ${String(index + 1).padStart(2, '0')}` }));
     });
     body.appendChild(suggestions);
     if (cutSuggestions.some(cut => cut.status === 'candidato' || cut.status === 'concluido' || cut.status === 'selecionado')) body.appendChild(domButton('Selecionar para postagem e renderizar', 'scissors', 'lime', 'render-selected-cuts'));
@@ -1294,6 +1323,7 @@ document.addEventListener('click', (event) => { if (event.target.closest('[data-
 document.addEventListener('click', (event) => { const briefingAction = event.target.closest('[data-action="briefing"]'); if (briefingAction) showBriefingPanel(briefingAction.dataset.opportunityId); });
 document.addEventListener('click', (event) => { if (event.target.closest('[data-action="upload-local"]')) uploadLocalMedia(); if (event.target.closest('[data-action="force-download"]')) forceDownloadMedia(); });
 document.addEventListener('click', (event) => { if (event.target.closest('[data-action="render-selected-cuts"]')) renderSelectedCuts(); });
+document.addEventListener('click', (event) => { const deleteButton = event.target.closest('[data-action="delete-cut"]'); if (deleteButton) deleteCut(Number(deleteButton.dataset.cutId)); const scheduleButton = event.target.closest('[data-action="schedule-cut"]'); if (scheduleButton) scheduleCut(Number(scheduleButton.dataset.cutId)); });
 document.addEventListener('click', (event) => { if (event.target.closest('[data-action="cancel-job"]')) cancelActiveJob(); });
 document.addEventListener('click', (event) => { const option = event.target.closest('[data-action="profile-option"]'); if (option) selectProfile(option.dataset.profileId); });
 document.addEventListener('click', (event) => { if (event.target.closest('[data-action="profile-add"]')) addProfile(); if (event.target.closest('[data-action="profile-remove"]')) removeActiveProfile(); });

@@ -3,11 +3,13 @@
 ## Atualização
 
 - Candidatos estruturalmente válidos agora são renderizados mesmo quando a rodada termina em `needs_review`.
-- A Central exibe score, intervalo, evidência e link do MP4 antes da seleção humana.
+- A Central exibe player, score, intervalo, título, evidência, download e ações de exclusão/agendamento antes da seleção humana.
 - A seleção continua separada da aceitação automática: renderizar previamente não marca o candidato como escolhido.
+- Quando a IA não produz uma resposta aproveitável, o pipeline cria candidatos de revisão usando janelas contíguas reais da transcrição.
+- O job informa rodada, candidatos recebidos e válidos em tempo real, separando aprovação automática de revisão humana.
 
 **Status:** em implementacao
-**Progresso:** 60%
+**Progresso:** 95%
 **Prioridade:** critica
 **Area:** producao
 
@@ -22,7 +24,7 @@ Quando a analise nao atingir nove cortes recomendados, o sistema deve preservar 
 - Persistir payload bruto e diagnostico de cada rodada para auditoria e analise futura.
 - Exibir candidatos ordenados por score, com alerta para notas baixas ou dados incompletos.
 - Permitir selecao individual ou em lote.
-- Renderizar somente candidatos selecionados explicitamente.
+- Renderizar candidatos estruturais para revisão humana e reservar a seleção explícita para postagem/agendamento.
 - Manter candidatos e rodadas consultaveis sem executar novamente a Qwen.
 
 ## Estados
@@ -48,7 +50,9 @@ Cada rodada deve manter `perfil_id`, `video_id`, `video_titulo`, `job_id`, `nume
 - [x] Candidatos estruturalmente validos abaixo do score recomendado sao preservados.
 - [x] Candidatos de `needs_review` sao persistidos com video original e rodada.
 - [x] API de selecao e job de renderizacao sob aprovacao implementados.
-- [x] Interface exibe score, rodada, checkbox e acao de renderizacao.
+- [x] Interface exibe player, score, rodada, checkbox, download, exclusao e agendamento.
+- [x] Fallback cria candidatos reais quando a IA retorna estrutura inválida ou vazia.
+- [x] Progresso em tempo real informa rodada, candidatos recebidos e candidatos válidos.
 - [ ] Persistir payload bruto completo de cada resposta da Qwen.
 - [ ] Persistir motivo individual para cada rejeicao estrutural.
 - [ ] Exibir historico completo de rodadas por video.
