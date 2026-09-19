@@ -2,6 +2,10 @@
 
 Esta pasta organiza o trabalho por tipo e mantém um manifesto único em `index.json`.
 
+## Versionamento
+
+O backlog faz parte do repositório Git e é publicado junto com o código. Cada alteração de produto deve atualizar o item correspondente em `index.json`, o documento Markdown da feature/bug e, quando necessário, o `BACKLOG.md` de contexto amplo. O commit cria o histórico auditável entre implementação, testes e decisão de produto.
+
 ## Estrutura
 
 - `epicos/`: objetivos amplos e critérios de conclusão.

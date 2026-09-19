@@ -34,6 +34,8 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [x] **Curadoria humana de cortes:** candidatos renderizados aparecem em cards com player, título, score, duração, download, exclusão, seleção e agendamento; candidatos abaixo do limiar continuam disponíveis para aprovação humana.
 - [x] **Análise de conteúdo observável:** o job exibe progresso por rodada da IA, quantidade de candidatos recebidos e válidos, separando aprovação automática de revisão humana.
 - [x] **Fallback de cortes:** quando a resposta do Qwen não atende ao contrato, o pipeline cria janelas contíguas ancoradas na transcrição dentro da faixa escolhida para evitar a tela vazia.
+- [x] **Revisão visual dos cortes:** a Central exibe todos os candidatos em grade, expande cada item individualmente e reproduz MP4 com streaming parcial compatível com HTML5.
+- [x] **Score editorial observável:** candidatos sem subnotas do Qwen recebem pontuação calculada por sinais da transcrição; scores antigos zerados são recalculados na API.
 
 ### E3. Automação de agendamento e publicação
 

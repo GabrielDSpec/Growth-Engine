@@ -275,15 +275,23 @@ h3 { font-size: 14px; letter-spacing: -.025em; }
 .transcription-summary strong { font-size: 14px; }
 .transcription-summary span { color: var(--muted); font: 10px 'DM Mono', monospace; }
 .transcription-summary p { max-width: 760px; color: var(--ink); font-size: 12px; line-height: 1.5; }
-.cut-card { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); }
-.cut-card + .cut-card { margin-top: 12px; }
+.suggestion-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; padding: 14px; }
+.cut-card { min-width: 0; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); overflow: hidden; }
+.cut-card[open] { grid-column: span 2; }
+.cut-card summary { cursor: pointer; list-style: none; }
+.cut-card summary::-webkit-details-marker { display: none; }
+.cut-card-summary { display: grid; gap: 8px; padding: 14px; min-height: 126px; }
+.cut-card-summary::after { content: 'Abrir revisão'; color: var(--muted); font: 10px 'DM Mono', monospace; text-transform: uppercase; }
+.cut-card[open] .cut-card-summary::after { content: 'Fechar revisão'; }
 .cut-card-header, .cut-card-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.cut-card h3 { margin: 0; font-size: 16px; }
+.cut-card h3 { margin: 0; font-size: 15px; }
+.cut-card-body { display: grid; gap: 10px; padding: 0 14px 14px; }
 .cut-card-meta, .cut-card-copy { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .cut-player { width: min(100%, 520px); aspect-ratio: 16 / 9; display: block; border-radius: 5px; background: #080607; }
 .cut-select { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); font-size: 12px; cursor: pointer; }
 .cut-error { color: #b73d47; font-size: 12px; }
 .cut-card-actions .button { margin: 0; }
+@media (max-width: 760px) { .cut-card[open] { grid-column: span 1; } }
 @media (max-width: 640px) { .media-intake-row { align-items: stretch; flex-direction: column; } }
 .briefing-panel { position: fixed; top: 76px; right: 24px; z-index: 35; width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 100px); overflow: auto; padding: 22px; background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }
 .briefing-panel h2 { margin: 18px 0 8px; }

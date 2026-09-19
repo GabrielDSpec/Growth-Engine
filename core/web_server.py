@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlparse
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 from core.database import get_connection, init_db, salvar_perfil_google
-from core.cutter import gerar_cortes_com_retry, garimpar_vacas_roxas
+from core.cutter import gerar_cortes_com_retry, garimpar_vacas_roxas, calcular_score_observavel
 from core.cutter import normalizar_titulo_corte
 from core.config import MAX_UPLOAD_BYTES, PASTA_LONGOS, PASTA_SHORTS, UPLOAD_CHUNK_BYTES, obter_pastas_midia
 from core.cuts_repository import create_cut, update_cut, list_cuts
@@ -95,6 +95,16 @@ def _local_media_title(path):
     filename = os.path.basename(path)
     parts = filename.split("_", 2)
     return parts[2] if filename.startswith("upload_") and len(parts) == 3 else filename
+
+
+def _present_cut_score(cut):
+    if float(cut.get("score_vaca_roxa") or 0) > 0:
+        return cut
+    text = " ".join(filter(None, (cut.get("gancho"), cut.get("promessa"), cut.get("virada"), cut.get("conclusao"))))
+    if not text:
+        return cut
+    score = calcular_score_observavel(text, [{"texto": cut.get("gancho") or text}])
+    return {**cut, "score_vaca_roxa": score["score"], "pontuacoes": score["pontuacoes"]}
 
 
 def _youtube_video_url(url):
@@ -955,7 +965,7 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/cuts":
             video_id = parse_qs(parsed.query).get("video_id", [None])[0]
-            self._send_json({"cortes": list_cuts(video_id=video_id, perfil_id=self.request_profile_id)})
+            self._send_json({"cortes": [_present_cut_score(cut) for cut in list_cuts(video_id=video_id, perfil_id=self.request_profile_id)]})
             return
         if parsed.path == "/api/cuts/file":
             cut_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -965,15 +975,42 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                 if not cut or cut.get("status") != "concluido" or not output_path or not os.path.isfile(output_path):
                     self.send_error(404, "Corte não disponível")
                     return
-                with open(output_path, "rb") as media:
-                    data = media.read()
-                self.send_response(200)
+                file_size = os.path.getsize(output_path)
+                range_header = self.headers.get("Range", "")
+                start, end = 0, file_size - 1
+                if range_header.startswith("bytes="):
+                    requested = range_header[6:].split(",", 1)[0].strip()
+                    first, _, last = requested.partition("-")
+                    if first:
+                        start = int(first)
+                        end = int(last) if last else end
+                    elif last:
+                        start = max(file_size - int(last), 0)
+                    if start >= file_size or start > end:
+                        self.send_response(416)
+                        self.send_header("Content-Range", f"bytes */{file_size}")
+                        self.end_headers()
+                        return
+                    end = min(end, file_size - 1)
+                content_length = end - start + 1
+                self.send_response(206 if range_header.startswith("bytes=") else 200)
                 self.send_header("Content-Type", "video/mp4")
-                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Content-Length", str(content_length))
+                if range_header.startswith("bytes="):
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
                 self.send_header("Content-Disposition", f"inline; filename={os.path.basename(output_path)}")
                 self.end_headers()
-                self.wfile.write(data)
-            except OSError:
+                with open(output_path, "rb") as media:
+                    media.seek(start)
+                    remaining = content_length
+                    while remaining:
+                        chunk = media.read(min(1024 * 1024, remaining))
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        remaining -= len(chunk)
+            except (OSError, ValueError):
                 self.send_error(404, "Arquivo do corte indisponível")
             return
         if parsed.path == "/api/transcription":

@@ -7,6 +7,9 @@
 - A seleção continua separada da aceitação automática: renderizar previamente não marca o candidato como escolhido.
 - Quando a IA não produz uma resposta aproveitável, o pipeline cria candidatos de revisão usando janelas contíguas reais da transcrição.
 - O job informa rodada, candidatos recebidos e válidos em tempo real, separando aprovação automática de revisão humana.
+- Os candidatos aparecem em uma grade compacta; cada item expande individualmente para assistir, selecionar, baixar, excluir ou agendar.
+- A rota de mídia suporta `Range`/`206 Partial Content`, permitindo reprodução e avanço no player HTML5.
+- Scores zerados de candidatos antigos são recalculados na API com sinais observáveis da transcrição.
 
 **Status:** em implementacao
 **Progresso:** 95%
@@ -53,6 +56,8 @@ Cada rodada deve manter `perfil_id`, `video_id`, `video_titulo`, `job_id`, `nume
 - [x] Interface exibe player, score, rodada, checkbox, download, exclusao e agendamento.
 - [x] Fallback cria candidatos reais quando a IA retorna estrutura inválida ou vazia.
 - [x] Progresso em tempo real informa rodada, candidatos recebidos e candidatos válidos.
+- [x] Grade expansível e streaming parcial permitem assistir cada candidato antes da aprovação.
+- [x] Score observável substitui o zero quando a IA não fornece subnotas.
 - [ ] Persistir payload bruto completo de cada resposta da Qwen.
 - [ ] Persistir motivo individual para cada rejeicao estrutural.
 - [ ] Exibir historico completo de rodadas por video.

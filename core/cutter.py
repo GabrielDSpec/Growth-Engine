@@ -100,6 +100,30 @@ def _deduplicar_cortes(cortes):
     return resultado
 
 
+def calcular_score_observavel(texto, segmentos):
+    """Pontua evidências editoriais do trecho sem fingir métricas de publicação."""
+    palavras = [palavra for palavra in _texto_normalizado(texto).split() if len(palavra) >= 4]
+    unicas = len(set(palavras))
+    distintividade = min(100, round((unicas / max(len(palavras), 1)) * 130))
+    inicio = segmentos[0].get("texto", "") if segmentos else ""
+    hook_words = len(_texto_normalizado(inicio).split())
+    gancho = min(100, 45 + hook_words * 5 + (20 if "?" in inicio or "!" in inicio else 0))
+    clareza = min(100, 45 + (20 if 45 <= len(palavras) <= 230 else 8))
+    autonomia = min(100, 45 + (20 if len(segmentos) >= 3 else 8) + (15 if len(palavras) >= 70 else 0))
+    marcadores = {"como", "porque", "erro", "verdade", "descobri", "problema", "resultado", "melhor", "pior"}
+    compartilhabilidade = min(100, 40 + len(marcadores.intersection(palavras)) * 10)
+    evidencia = 90 if texto and segmentos else 0
+    pontuacoes = {
+        "distintividade": distintividade,
+        "gancho": gancho,
+        "clareza_promessa": clareza,
+        "autossuficiencia": autonomia,
+        "compartilhabilidade": compartilhabilidade,
+        "evidencia": evidencia,
+    }
+    return {"score": calcular_score_corte(pontuacoes), "pontuacoes": pontuacoes}
+
+
 def _candidatos_para_revisao(candidatos, segmentos, duracao_total_seg, duracao_minima=10, duracao_maxima=90):
     if not segmentos:
         return []
@@ -124,7 +148,10 @@ def _candidatos_para_revisao(candidatos, segmentos, duracao_total_seg, duracao_m
         vistos.add(intervalo)
         texto = " ".join(segmento["texto"] for segmento in selecionados)
         pontuacoes = candidato.get("pontuacoes") if isinstance(candidato.get("pontuacoes"), dict) else {}
-        score = calcular_score_corte(pontuacoes) if pontuacoes else 0
+        score = calcular_score_corte(pontuacoes) if pontuacoes else calcular_score_observavel(texto, selecionados)
+        if not pontuacoes:
+            pontuacoes = score["pontuacoes"]
+            score = score["score"]
         revisao.append({
             "titulo": normalizar_titulo_corte(candidato.get("titulo")) or f"Trecho para revisão {len(revisao) + 1:02d}",
             "inicio": inicio,
@@ -178,6 +205,7 @@ def _candidatos_fallback(segmentos, duracao_total_seg, duracao_minima, duracao_m
         if fim - inicio <= duracao_maxima and fim <= duracao_total_seg:
             trecho = segmentos[inicio_pos:fim_pos + 1]
             texto = " ".join(item["texto"] for item in trecho).strip()
+            score_data = calcular_score_observavel(texto, trecho)
             candidatos.append({
                 "titulo": f"Trecho para revisar {len(candidatos) + 1:02d}",
                 "inicio": inicio,
@@ -188,8 +216,8 @@ def _candidatos_fallback(segmentos, duracao_total_seg, duracao_minima, duracao_m
                 "promessa": texto[:240],
                 "virada": trecho[len(trecho) // 2]["texto"],
                 "conclusao": trecho[-1]["texto"],
-                "score_vaca_roxa": 0,
-                "pontuacoes": {},
+                "score_vaca_roxa": score_data["score"],
+                "pontuacoes": score_data["pontuacoes"],
                 "revisao_humana": True,
                 "fallback_transcricao": True,
             })

@@ -4,7 +4,7 @@ from threading import Event
 from unittest.mock import patch
 
 from core.content_profile import VIDEO_THEME_SCHEMA, _classificar_videos, _parse_classification_response, _rotulo_valido
-from core.cutter import calcular_score_corte, gerar_cortes_com_retry, validar_cortes
+from core.cutter import calcular_score_corte, calcular_score_observavel, gerar_cortes_com_retry, validar_cortes
 from core.profiles import validar_url_canal
 from core.radar_sources import _rss_source_urls
 from core.task_runner import TaskRunner
@@ -70,6 +70,14 @@ class CoreContractsTests(unittest.TestCase):
             "evidencia": 100,
         })
         self.assertEqual(score, 100)
+
+    def test_observable_cut_score_is_nonzero_without_ai_subscores(self):
+        score = calcular_score_observavel(
+            "Como descobri o erro e o resultado surpreendeu a equipe",
+            [{"texto": "Como descobri o erro e o resultado surpreendeu"}],
+        )
+        self.assertGreater(score["score"], 0)
+        self.assertEqual(set(score["pontuacoes"]), {"distintividade", "gancho", "clareza_promessa", "autossuficiencia", "compartilhabilidade", "evidencia"})
 
     def test_cutter_retries_three_times_then_requests_review(self):
         class EmptyResponse:
