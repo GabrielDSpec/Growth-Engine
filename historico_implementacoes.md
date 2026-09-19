@@ -158,7 +158,7 @@ Toda implementacao relevante deve atualizar este arquivo com:
 - O prompt da Qwen exige início e fim em frases completas e sinaliza a estrutura editorial opcional `gancho_contexto_retorno`.
 - A validação expande segmentos Whisper até uma fronteira de frase quando possível e rejeita candidatos que terminam no meio da fala.
 - Testes de regressão cobrem truncamento e expansão de frases; a suíte completa passou com 38 testes.
-- Pendência explícita: o renderer ainda trabalha com intervalo contínuo e não monta fisicamente a sequência gancho, contexto e retorno ao destaque.
+- Naquele estado, a montagem não contínua ainda era uma pendência; ela foi concluída na continuação registrada abaixo.
 
 ## Continuação de 19/09/2026 - Montagem de retenção no FFmpeg
 

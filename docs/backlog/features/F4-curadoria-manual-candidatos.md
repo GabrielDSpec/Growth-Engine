@@ -17,6 +17,7 @@
 - A interface permite excluir um ciclo inteiro, marcando seus cortes como excluídos e removendo os MP4s gerados.
 - A validação semântica rejeita limites no meio de frases e amplia segmentos Whisper até o encerramento da frase, dentro da duração máxima.
 - O contrato da Qwen sinaliza a oportunidade editorial `gancho_contexto_retorno`, sem inventar falas ou timestamps.
+- A montagem composta é persistida em `montagem_json` e o FFmpeg concatena gancho, contexto e destaque; cortes legados usam o intervalo contínuo.
 
 **Status:** em implementacao
 **Progresso:** 95%
@@ -49,7 +50,7 @@ Cada rodada deve manter `perfil_id`, `video_id`, `video_titulo`, `job_id`, `nume
 
 - Candidatos validos estruturalmente com score abaixo de 70 aparecem na tela para revisao.
 - A tela mostra score total, subnotas, intervalo, titulo, gancho e rodada.
-- Nenhum candidato e renderizado sem selecao explicita.
+- Nenhum candidato e agendado sem selecao explicita; candidatos em `needs_review` podem ser renderizados previamente para avaliacao humana.
 - A selecao respeita `perfil_id` e nao permite escolher candidato de outro tenant.
 - Uma falha de FFmpeg altera apenas o candidato afetado e preserva os demais.
 - Uma analise anterior pode ser consultada pelo video original e pelo nome da rodada.

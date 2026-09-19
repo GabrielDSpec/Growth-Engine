@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-19T18:00:00-03:00",
+  "updated_at": "2026-09-19T19:00:00-03:00",
   "items": [
     {"id":"E8","title":"Multi-Tenant e Operação Modo Agência","type":"epic","status":"in_progress","priority":"critical","progress":82,"area":"plataforma","path":"epicos/E8-multitenant.md","notes":"Fases 1-3 operacionais; RBAC e PDF executivo permanecem."},
     {"id":"F3-UPLOAD","title":"Upload Local por Perfil","type":"feature","status":"done","priority":"high","progress":100,"area":"produção","path":"features/F3-upload-local-por-perfil.md","notes":"Mídia, job, Whisper, Qwen e FFmpeg escopados por perfil."},
