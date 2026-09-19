@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 from core.config import DIRETORIO_PROJETO
@@ -55,12 +56,39 @@ def obter_duracao(caminho, timeout=30):
     return duration
 
 
-def renderizar_corte(caminho_origem, caminho_saida, inicio, fim, filtro=None, timeout=600):
+def renderizar_corte(caminho_origem, caminho_saida, inicio, fim, filtro=None, timeout=600, intervalos=None):
     ffmpeg, _ = localizar_ferramentas()
     duration = obter_duracao(caminho_origem)
     if not 0 <= float(inicio) < float(fim) <= duration:
         raise MediaToolError("Timestamps do corte estão fora da duração do arquivo.")
     os.makedirs(os.path.dirname(caminho_saida), exist_ok=True)
+    intervalos = intervalos or []
+    if intervalos:
+        normalizados = []
+        for intervalo in intervalos:
+            trecho_inicio = float(intervalo["inicio"])
+            trecho_fim = float(intervalo["fim"])
+            if not 0 <= trecho_inicio < trecho_fim <= duration:
+                raise MediaToolError("Intervalo de montagem fora da duração do arquivo.")
+            normalizados.append((trecho_inicio, trecho_fim))
+        with tempfile.TemporaryDirectory(prefix="growth-cut-") as pasta_temporaria:
+            partes = []
+            for indice, (trecho_inicio, trecho_fim) in enumerate(normalizados):
+                parte = os.path.join(pasta_temporaria, f"parte-{indice}.mp4")
+                comando_parte = [ffmpeg, "-y", "-ss", f"{trecho_inicio:.3f}", "-to", f"{trecho_fim:.3f}", "-i", caminho_origem]
+                if filtro:
+                    comando_parte.extend(["-vf", filtro])
+                comando_parte.extend(["-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", parte])
+                _run(comando_parte, timeout)
+                partes.append(parte)
+            lista = os.path.join(pasta_temporaria, "concat.txt")
+            with open(lista, "w", encoding="utf-8") as arquivo:
+                for parte in partes:
+                    arquivo.write(f"file '{parte.replace(chr(92), '/')}'\n")
+            _run([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", lista, "-c", "copy", caminho_saida], timeout)
+        if not os.path.isfile(caminho_saida) or os.path.getsize(caminho_saida) <= 0:
+            raise MediaToolError("FFmpeg não produziu um arquivo composto válido.")
+        return caminho_saida
     command = [ffmpeg, "-y", "-ss", str(inicio), "-to", str(fim), "-i", caminho_origem]
     if filtro:
         command.extend(["-vf", filtro])

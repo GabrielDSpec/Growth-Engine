@@ -221,7 +221,7 @@ def init_db():
                 cursor.execute(f"ALTER TABLE videos_historico ADD COLUMN {coluna} {tipo}")
             except sqlite3.OperationalError:
                 pass
-        for coluna, tipo in (("video_titulo", "TEXT"), ("nome_rodada", "TEXT"), ("numero_rodada", "INTEGER"), ("selecionado", "INTEGER NOT NULL DEFAULT 0"), ("motivo_rejeicao", "TEXT")):
+        for coluna, tipo in (("video_titulo", "TEXT"), ("nome_rodada", "TEXT"), ("numero_rodada", "INTEGER"), ("selecionado", "INTEGER NOT NULL DEFAULT 0"), ("motivo_rejeicao", "TEXT"), ("montagem_json", "TEXT NOT NULL DEFAULT ''")):
             try:
                 cursor.execute(f"ALTER TABLE cortes_gerados ADD COLUMN {coluna} {tipo}")
             except sqlite3.OperationalError:

@@ -193,7 +193,7 @@ def _process_local_media_job(job_id, path, perfil_id, duracao_minima=30, duracao
                 output_path = os.path.join(media_dirs["shorts"], output_name)
                 try:
                     update_cut(cut_id, status="renderizando", perfil_id=perfil_id)
-                    renderizar_corte(path, output_path, candidate["inicio"], candidate["fim"])
+                    renderizar_corte(path, output_path, candidate["inicio"], candidate["fim"], intervalos=candidate.get("montagem_intervalos"))
                     update_cut(cut_id, status="concluido", output_path=output_path, perfil_id=perfil_id)
                     candidate_status = "concluido"
                 except Exception as error:
@@ -221,7 +221,7 @@ def _process_local_media_job(job_id, path, perfil_id, duracao_minima=30, duracao
             output = os.path.join(media_dirs["shorts"], f"{job_id}_{cut_id}.mp4")
             try:
                 update_cut(cut_id, status="renderizando", perfil_id=perfil_id)
-                renderizar_corte(path, output, suggestion["inicio"], suggestion["fim"])
+                renderizar_corte(path, output, suggestion["inicio"], suggestion["fim"], intervalos=suggestion.get("montagem_intervalos"))
                 update_cut(cut_id, status="concluido", output_path=output, perfil_id=perfil_id)
                 results.append({**suggestion, "cut_id": cut_id, "status": "concluido", "output_path": output})
             except Exception as error:
@@ -648,7 +648,7 @@ def _run_cut_job(job_id, video_id, perfil_id, duracao_minima=30, duracao_maxima=
                 output_path = os.path.join(obter_pastas_midia(perfil_id)["shorts"], output_name)
                 try:
                     update_cut(cut_id, status="renderizando", perfil_id=perfil_id)
-                    renderizar_corte(source_path, output_path, candidate["inicio"], candidate["fim"])
+                    renderizar_corte(source_path, output_path, candidate["inicio"], candidate["fim"], intervalos=candidate.get("montagem_intervalos"))
                     update_cut(cut_id, status="concluido", output_path=output_path, perfil_id=perfil_id)
                     candidate_status = "concluido"
                 except Exception as error:
@@ -670,7 +670,7 @@ def _run_cut_job(job_id, video_id, perfil_id, duracao_minima=30, duracao_maxima=
             output_path = os.path.join(obter_pastas_midia(perfil_id)["shorts"], output_name)
             try:
                 update_cut(cut_id, status="renderizando", perfil_id=perfil_id)
-                renderizar_corte(source_path, output_path, suggestion["inicio"], suggestion["fim"])
+                renderizar_corte(source_path, output_path, suggestion["inicio"], suggestion["fim"], intervalos=suggestion.get("montagem_intervalos"))
                 update_cut(cut_id, status="concluido", output_path=output_path, perfil_id=perfil_id)
                 persisted.append({**suggestion, "cut_id": cut_id, "output_path": output_path, "status": "concluido"})
             except Exception as error:
@@ -704,7 +704,7 @@ def _run_selected_cuts_job(job_id, cut_ids, perfil_id):
             output_path = os.path.join(output_dir, output_name)
             try:
                 update_cut(cut["id"], status="renderizando", perfil_id=perfil_id)
-                renderizar_corte(cut["arquivo_origem"], output_path, cut["inicio_segundos"], cut["fim_segundos"])
+                renderizar_corte(cut["arquivo_origem"], output_path, cut["inicio_segundos"], cut["fim_segundos"], intervalos=cut.get("montagem_intervalos"))
                 update_cut(cut["id"], status="concluido", output_path=output_path, perfil_id=perfil_id)
                 results.append({**cut, "status": "concluido", "output_path": output_path})
             except Exception as error:

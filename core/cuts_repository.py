@@ -13,12 +13,12 @@ def create_cut(job_id, video_id, source_path, data, perfil_id=1, status="pendent
             INSERT INTO cortes_gerados
             (job_id, perfil_id, video_id, arquivo_origem, segmento_inicio, segmento_fim,
              inicio_segundos, fim_segundos, titulo, gancho, promessa, virada,
-             conclusao, score_vaca_roxa, pontuacoes_json, status, video_titulo, nome_rodada, numero_rodada)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             conclusao, score_vaca_roxa, pontuacoes_json, montagem_json, status, video_titulo, nome_rodada, numero_rodada)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (job_id, perfil_id, video_id, source_path, data.get("segmento_inicio"), data.get("segmento_fim"),
               data["inicio"], data["fim"], data.get("titulo", ""), data.get("gancho", ""),
               data.get("promessa", ""), data.get("virada", ""), data.get("conclusao", ""),
-              data.get("score_vaca_roxa", 0), json.dumps(data.get("pontuacoes", {}), ensure_ascii=False), status,
+              data.get("score_vaca_roxa", 0), json.dumps(data.get("pontuacoes", {}), ensure_ascii=False), json.dumps(data.get("montagem_intervalos", []), ensure_ascii=False), status,
               video_title, round_name or f"rodada-{data.get('numero_rodada', 1):02d}", data.get("numero_rodada", 1)))
         conn.commit()
         return cursor.lastrowid
@@ -74,6 +74,10 @@ def list_cuts(job_id=None, video_id=None, perfil_id=1):
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         cuts = [dict(row) for row in conn.execute(f"SELECT * FROM cortes_gerados{where} ORDER BY id", values).fetchall()]
         for cut in cuts:
+            try:
+                cut["montagem_intervalos"] = json.loads(cut.get("montagem_json") or "[]")
+            except (TypeError, json.JSONDecodeError):
+                cut["montagem_intervalos"] = []
             if not cut.get("nome_rodada") or cut["nome_rodada"] == "rodada-01" or "-curadoria-" in cut["nome_rodada"]:
                 cut["nome_rodada"] = f"{cut.get('video_titulo') or cut.get('video_id') or 'Vídeo'} · ciclo {str(cut.get('job_id') or cut.get('id'))[:8]}"
         return cuts

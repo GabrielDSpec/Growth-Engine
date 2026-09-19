@@ -135,7 +135,7 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [ ] **Fila de análise de conteúdo:** a Autópsia dos vídeos longos usa Whisper/Qwen, cache e progresso persistente; é necessário acompanhar a retomada, o total de pendências e o resultado final após reinício.
 - [ ] **Modularização do backend:** repositories de notificações, análises e perfil, providers RSS e `TaskRunner` já existem; faltam handlers HTTP por domínio e remoção progressiva da orquestração concentrada.
 - [ ] **Hardening operacional:** CSP, Origin, URLs YouTube, perfil Chrome externo e contratos básicos já foram adicionados; faltam XSS residual, limites de threads e validação de FFmpeg.
-- [ ] **Montagem editorial de gancho:** a Qwen já pode sinalizar `gancho_contexto_retorno`; falta montar fisicamente no FFmpeg a sequência gancho, contexto e retorno ao destaque.
+- [x] **Montagem editorial de gancho:** a Qwen sinaliza `gancho_contexto_retorno`; os intervalos são persistidos e montados no FFmpeg na sequência gancho, contexto e retorno ao destaque.
 
 ### Done
 
@@ -154,6 +154,7 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [x] **Proteções iniciais:** CSP, validação de Origin em POSTs, validação de URLs YouTube e remoção do handler inline de erro do avatar.
 - [x] **Curadoria visual de cortes:** revisão em modal com blur, player do MP4 renderizado em 9:16, ações laterais, agrupamento amigável por ciclo/rodada e exclusão de ciclo com limpeza dos arquivos.
 - [x] **Integridade semântica dos cortes:** validação rejeita cortes no meio de frases e expande segmentos Whisper até uma fronteira de encerramento; testes de regressão cobrem ambos os casos.
+- [x] **Montagem de retenção:** cortes podem repetir o destaque no começo e retornar ao contexto até o momento original, com fallback contínuo para cortes antigos ou sem marcação válida.
 
 ## Definição de pronto do sprint
 

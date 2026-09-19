@@ -73,4 +73,4 @@ Cada rodada deve manter `perfil_id`, `video_id`, `video_titulo`, `job_id`, `nume
 - [ ] Persistir payload bruto completo de cada resposta da Qwen.
 - [ ] Persistir motivo individual para cada rejeicao estrutural.
 - [ ] Exibir historico completo de rodadas por video.
-- [ ] Montar fisicamente cortes não contínuos no formato gancho, contexto e retorno ao destaque.
+- [x] Montar fisicamente cortes não contínuos no formato gancho, contexto e retorno ao destaque com FFmpeg.

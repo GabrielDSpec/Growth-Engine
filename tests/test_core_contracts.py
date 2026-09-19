@@ -196,6 +196,35 @@ class CoreContractsTests(unittest.TestCase):
         self.assertEqual(result[0]["segmento_fim"], 1)
         self.assertEqual(result[0]["fim"], 20)
 
+    def test_cutter_builds_hook_context_highlight_montage(self):
+        candidate = {
+            "titulo": "A descoberta muda o resultado",
+            "segmento_inicio": 0,
+            "segmento_fim": 2,
+            "gancho": "A descoberta aconteceu.",
+            "gancho_inicio": "A descoberta aconteceu.",
+            "destaque": "A descoberta aconteceu.",
+            "montagem": "gancho_contexto_retorno",
+            "promessa": "o contexto explica a descoberta",
+            "virada": "A descoberta aconteceu.",
+            "conclusao": "O contexto fecha a ideia.",
+            "autossuficiente": True,
+            "promocional": False,
+            "pontuacoes": {chave: 100 for chave in ("distintividade", "gancho", "clareza_promessa", "autossuficiencia", "compartilhabilidade", "evidencia")},
+        }
+        segments = [
+            {"indice": 0, "inicio": 0, "fim": 10, "texto": "O contexto explica tudo."},
+            {"indice": 1, "inicio": 10, "fim": 20, "texto": "A descoberta aconteceu."},
+            {"indice": 2, "inicio": 20, "fim": 30, "texto": "O contexto fecha a ideia."},
+        ]
+        result = validar_cortes([candidate], 30, segments, score_minimo=0)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["montagem_intervalos"], [
+            {"inicio": 10, "fim": 20},
+            {"inicio": 0, "fim": 10},
+            {"inicio": 10, "fim": 20},
+        ])
+
     def test_radar_has_search_and_primary_rss_sources(self):
         sources = _rss_source_urls("eventos São Paulo", include_primary=True, topic="Viagem ao litoral")
         providers = {provider for provider, _ in sources}

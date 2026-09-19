@@ -27,4 +27,4 @@ Ao criar ou alterar um item, atualize `index.json` e o documento correspondente 
 
 As sessões de geração de cortes são agrupadas por vídeo original e ciclo de análise; o ciclo é identificado pelo job persistido da sessão para que execuções repetidas não se misturem.
 
-A curadoria exige fronteiras de frases completas. A Qwen pode sinalizar uma oportunidade de montagem `gancho_contexto_retorno`, mas a renderização atual ainda trabalha com intervalos contínuos; a montagem não contínua permanece no backlog.
+A curadoria exige fronteiras de frases completas. A Qwen pode sinalizar uma oportunidade de montagem `gancho_contexto_retorno`, que o renderer persiste e monta em FFmpeg na ordem gancho, contexto e retorno ao destaque.

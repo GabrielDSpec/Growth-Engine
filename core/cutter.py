@@ -166,6 +166,7 @@ def _candidatos_para_revisao(candidatos, segmentos, duracao_total_seg, duracao_m
             continue
         vistos.add(intervalo)
         texto = " ".join(segmento["texto"] for segmento in selecionados)
+        montagem_intervalos = _montagem_gancho_contexto_retorno(candidato, selecionados)
         pontuacoes = candidato.get("pontuacoes") if isinstance(candidato.get("pontuacoes"), dict) else {}
         score = calcular_score_corte(pontuacoes) if pontuacoes else calcular_score_observavel(texto, selecionados)
         if not pontuacoes:
@@ -181,6 +182,8 @@ def _candidatos_para_revisao(candidatos, segmentos, duracao_total_seg, duracao_m
             "promessa": str(candidato.get("promessa") or texto)[:240],
             "virada": str(candidato.get("virada") or "Trecho selecionado para avaliação humana")[:240],
             "conclusao": str(candidato.get("conclusao") or selecionados[-1]["texto"])[:240],
+            "montagem": candidato.get("montagem", "continua"),
+            "montagem_intervalos": montagem_intervalos,
             "score_vaca_roxa": score,
             "pontuacoes": pontuacoes,
             "revisao_humana": True,
@@ -238,6 +241,42 @@ def _ajustar_limites_para_frases(selecionados, segmentos, duracao_maxima):
     if _comeca_continuacao(selecionados[0]["texto"], inicio_pos > 0) or not _termina_frase(selecionados[-1]["texto"]):
         return None
     return inicio_pos, fim_pos, selecionados
+
+
+def _localizar_texto_em_segmentos(texto, segmentos):
+    palavras = _texto_normalizado(texto).split()
+    if not palavras:
+        return None
+    palavras_segmentos = [_texto_normalizado(item.get("texto", "")).split() for item in segmentos]
+    for inicio, palavras_item in enumerate(palavras_segmentos):
+        janela = []
+        for fim in range(inicio, len(segmentos)):
+            janela.extend(palavras_segmentos[fim])
+            if palavras == janela:
+                return inicio, fim
+            if len(janela) >= len(palavras):
+                break
+    return None
+
+
+def _montagem_gancho_contexto_retorno(candidato, selecionados):
+    if candidato.get("montagem") != "gancho_contexto_retorno":
+        return []
+    destaque = candidato.get("destaque") or candidato.get("virada")
+    gancho = candidato.get("gancho_inicio") or candidato.get("gancho") or destaque
+    destaque_pos = _localizar_texto_em_segmentos(destaque, selecionados)
+    gancho_pos = _localizar_texto_em_segmentos(gancho, selecionados)
+    if not destaque_pos or not gancho_pos:
+        return []
+    destaque_inicio, destaque_fim = destaque_pos
+    gancho_inicio, gancho_fim = gancho_pos
+    if destaque_inicio <= 0 or gancho_inicio < destaque_inicio:
+        return []
+    return [
+        {"inicio": selecionados[gancho_inicio]["inicio"], "fim": selecionados[gancho_fim]["fim"]},
+        {"inicio": selecionados[0]["inicio"], "fim": selecionados[destaque_inicio]["inicio"]},
+        {"inicio": selecionados[destaque_inicio]["inicio"], "fim": selecionados[destaque_fim]["fim"]},
+    ]
 
 
 def _candidatos_fallback(segmentos, duracao_total_seg, duracao_minima, duracao_maxima):
@@ -483,6 +522,7 @@ def validar_cortes(cortes, duracao_total_seg, segmentos=None, score_minimo=70, d
             texto_selecionado = " ".join(s["texto"] for s in selecionados)
             if not _evidencia_presente(gancho, texto_selecionado):
                 continue
+            montagem_intervalos = _montagem_gancho_contexto_retorno(corte, selecionados)
         else:
             try:
                 inicio = float(inicio)
@@ -503,6 +543,8 @@ def validar_cortes(cortes, duracao_total_seg, segmentos=None, score_minimo=70, d
             "promessa": promessa.strip(),
             "virada": virada.strip(),
             "conclusao": conclusao.strip(),
+            "montagem": corte.get("montagem", "continua"),
+            "montagem_intervalos": montagem_intervalos,
             "score_vaca_roxa": score,
             "pontuacoes": pontuacoes or {},
         })

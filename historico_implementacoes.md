@@ -160,6 +160,14 @@ Toda implementacao relevante deve atualizar este arquivo com:
 - Testes de regressão cobrem truncamento e expansão de frases; a suíte completa passou com 38 testes.
 - Pendência explícita: o renderer ainda trabalha com intervalo contínuo e não monta fisicamente a sequência gancho, contexto e retorno ao destaque.
 
+## Continuação de 19/09/2026 - Montagem de retenção no FFmpeg
+
+- Candidatos `gancho_contexto_retorno` agora localizam o gancho e o destaque nos segmentos Whisper e geram três intervalos ordenados: gancho, contexto e destaque.
+- A montagem é persistida em `cortes_gerados.montagem_json`, com migração automática para bancos existentes.
+- O renderer cria partes temporárias, aplica o encode configurado e concatena os arquivos com FFmpeg; cortes antigos continuam no caminho contínuo.
+- Teste de contrato adicionado para validar a ordem dos intervalos compostos.
+- A pendência de montagem não contínua foi concluída; permanecem payload bruto da Qwen e motivo individual de rejeição estrutural.
+
 ## Handoff de 19/09/2026 - Renderer de Shorts
 
 - Objetivo: corrigir o corte horizontal, manter o rosto no quadro vertical e evitar cortes abruptos de palavras.
