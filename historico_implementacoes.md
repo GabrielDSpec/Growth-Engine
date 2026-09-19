@@ -150,6 +150,31 @@ Toda implementacao relevante deve atualizar este arquivo com:
 - validacao executada;
 - pendencias e riscos.
 
+## Entrega de 19/09/2026 - Curadoria, ciclos e integridade semântica
+
+- A Central de cortes passou a agrupar sessões por vídeo e ciclo com rótulos amigáveis de ciclo/rodada, sem expor o ID do job na interface.
+- A revisão usa um modal com fundo escurecido e blur; o próprio MP4 renderizado é o player vertical 9:16.
+- Foram adicionadas ações laterais de Editar, Renderizar e Excluir, além da exclusão de ciclo completo com remoção dos MP4s gerados.
+- O prompt da Qwen exige início e fim em frases completas e sinaliza a estrutura editorial opcional `gancho_contexto_retorno`.
+- A validação expande segmentos Whisper até uma fronteira de frase quando possível e rejeita candidatos que terminam no meio da fala.
+- Testes de regressão cobrem truncamento e expansão de frases; a suíte completa passou com 38 testes.
+- Pendência explícita: o renderer ainda trabalha com intervalo contínuo e não monta fisicamente a sequência gancho, contexto e retorno ao destaque.
+
+## Handoff de 19/09/2026 - Renderer de Shorts
+
+- Objetivo: corrigir o corte horizontal, manter o rosto no quadro vertical e evitar cortes abruptos de palavras.
+- Arquivo principal: `core/cutter.py`.
+- Nova função: `renderizar_corte_shorts(video_origem, inicio, fim, caminho_saida)`.
+- O filtro FFmpeg calcula `crop=W:H:X:Y,scale=1080:1920:flags=lanczos`; `X:Y` vem do centro médio do maior rosto detectado em nove amostras OpenCV. Sem detecção, o fallback é o centro da imagem.
+- O intervalo usa padding padrão de `0.3s` no início e `0.5s` no fim, limitado pela duração do FFprobe. As variáveis `SHORTS_PADDING_INICIO` e `SHORTS_PADDING_FIM` permitem configuração.
+- O comando usa `libx264`, `crf 20`, `yuv420p`, AAC `192k`, `-map 0:a?` e `+faststart`; o áudio é mantido quando existe.
+- `cortar_com_ffmpeg` grava em `media/<perfil_id>/shorts`; `executar_cortes` agora aceita `perfil_id=1`.
+- Dependências instaladas no `.venv`: `opencv-python`, `requests`, `tqdm`, `yt-dlp` e `faster-whisper`.
+- Comando reproduzível: `\.venv\Scripts\python.exe -m pip install opencv-python requests tqdm yt-dlp faster-whisper`.
+- FFmpeg/FFprobe foram encontrados como executáveis locais na raiz do projeto; `core.cutter` importou corretamente após a instalação.
+- Validação concluída: compilação sintática de `core/cutter.py` e import do renderer. Smoke test real de mídia ainda pendente.
+- Risco conhecido: o ambiente não expõe FFmpeg no `PATH`, mas `core.media_tools.localizar_ferramentas()` resolve `ffmpeg.exe` e `ffprobe.exe` locais.
+
 ## Validacao de 18/09/2026
 
 - Corrigido `VIDEO_THEME_SCHEMA` em `core/content_profile.py`: a chave obrigatoria passou de `tema` para `tema_abstrato`, alinhando o schema com o formato retornado e consumido pelo classificador.

@@ -24,3 +24,7 @@ Abra `http://127.0.0.1:4174/backlog.html` com o servidor local ativo. O dashboar
 Cada item possui `progress` entre 0 e 100. O progresso de um grupo é a média dos itens do grupo. Status `done` deve ter 100; `blocked` mantém o percentual real e registra a causa em `notes`.
 
 Ao criar ou alterar um item, atualize `index.json` e o documento correspondente na pasta temática. O dashboard deve continuar sendo derivado do manifesto, nunca de texto Markdown.
+
+As sessões de geração de cortes são agrupadas por vídeo original e ciclo de análise; o ciclo é identificado pelo job persistido da sessão para que execuções repetidas não se misturem.
+
+A curadoria exige fronteiras de frases completas. A Qwen pode sinalizar uma oportunidade de montagem `gancho_contexto_retorno`, mas a renderização atual ainda trabalha com intervalos contínuos; a montagem não contínua permanece no backlog.

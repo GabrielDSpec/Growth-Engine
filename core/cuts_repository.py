@@ -46,6 +46,21 @@ def update_cut(cut_id, status=None, output_path=None, error=None, selected=None,
         conn.close()
 
 
+def update_cut_title(cut_id, title, perfil_id=1):
+    perfil_id = normalize_profile_id(perfil_id)
+    init_db()
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE cortes_gerados SET titulo=?, atualizado_em=CURRENT_TIMESTAMP WHERE id=? AND perfil_id=?", (title, cut_id, perfil_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_cycle_cuts(video_id, round_name, perfil_id=1):
+    return [cut for cut in list_cuts(video_id=video_id, perfil_id=perfil_id) if cut.get("nome_rodada") == round_name]
+
+
 def list_cuts(job_id=None, video_id=None, perfil_id=1):
     perfil_id = normalize_profile_id(perfil_id)
     init_db()
@@ -57,6 +72,10 @@ def list_cuts(job_id=None, video_id=None, perfil_id=1):
         if video_id:
             clauses.append("video_id=?"); values.append(video_id)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        return [dict(row) for row in conn.execute(f"SELECT * FROM cortes_gerados{where} ORDER BY id", values).fetchall()]
+        cuts = [dict(row) for row in conn.execute(f"SELECT * FROM cortes_gerados{where} ORDER BY id", values).fetchall()]
+        for cut in cuts:
+            if not cut.get("nome_rodada") or cut["nome_rodada"] == "rodada-01" or "-curadoria-" in cut["nome_rodada"]:
+                cut["nome_rodada"] = f"{cut.get('video_titulo') or cut.get('video_id') or 'Vídeo'} · ciclo {str(cut.get('job_id') or cut.get('id'))[:8]}"
+        return cuts
     finally:
         conn.close()

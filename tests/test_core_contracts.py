@@ -4,7 +4,7 @@ from threading import Event
 from unittest.mock import patch
 
 from core.content_profile import VIDEO_THEME_SCHEMA, _classificar_videos, _parse_classification_response, _rotulo_valido
-from core.cutter import calcular_score_corte, calcular_score_observavel, gerar_cortes_com_retry, validar_cortes
+from core.cutter import calcular_score_corte, calcular_score_observavel, gerar_cortes_com_retry, refinar_titulo_corte, validar_cortes
 from core.profiles import validar_url_canal
 from core.radar_sources import _rss_source_urls
 from core.task_runner import TaskRunner
@@ -79,6 +79,10 @@ class CoreContractsTests(unittest.TestCase):
         self.assertGreater(score["score"], 0)
         self.assertEqual(set(score["pontuacoes"]), {"distintividade", "gancho", "clareza_promessa", "autossuficiencia", "compartilhabilidade", "evidencia"})
 
+    def test_generic_cut_title_is_replaced_by_content_title(self):
+        title = refinar_titulo_corte("Trecho para revisar 01", "As juradas avaliaram a competição")
+        self.assertEqual(title, "As juradas avaliaram a competição")
+
     def test_cutter_retries_three_times_then_requests_review(self):
         class EmptyResponse:
             status_code = 200
@@ -93,7 +97,7 @@ class CoreContractsTests(unittest.TestCase):
         self.assertEqual(request.call_count, 3)
 
     def test_cutter_accepts_nine_distinct_valid_segments(self):
-        segmentos = [{"indice": indice, "inicio": indice * 10, "fim": (indice + 1) * 10, "texto": f"fala {indice}"} for indice in range(9)]
+        segmentos = [{"indice": indice, "inicio": indice * 10, "fim": (indice + 1) * 10, "texto": f"Fala {indice} com conclusão."} for indice in range(9)]
         candidatos = [{
             "titulo": f"Descoberta numero {indice}",
             "segmento_inicio": indice,
@@ -132,7 +136,7 @@ class CoreContractsTests(unittest.TestCase):
             "promocional": False,
             "pontuacoes": {"distintividade": 60, "gancho": 60, "clareza_promessa": 60, "autossuficiencia": 60, "compartilhabilidade": 60, "evidencia": 60},
         }
-        segments = [{"indice": 0, "inicio": 0, "fim": 20, "texto": "fala importante com a ideia principal"}]
+        segments = [{"indice": 0, "inicio": 0, "fim": 20, "texto": "Fala importante com a ideia principal."}]
         self.assertEqual(len(validar_cortes([candidate], 20, segments)), 0)
         preserved = validar_cortes([candidate], 20, segments, score_minimo=0)
         self.assertEqual(len(preserved), 1)
@@ -151,8 +155,46 @@ class CoreContractsTests(unittest.TestCase):
             "promocional": False,
             "pontuacoes": {chave: 100 for chave in ("distintividade", "gancho", "clareza_promessa", "autossuficiencia", "compartilhabilidade", "evidencia")},
         }
-        segments = [{"indice": 0, "inicio": 0, "fim": 20, "texto": "Essa descoberta realmente importante mudou tudo para nós"}]
+        segments = [{"indice": 0, "inicio": 0, "fim": 20, "texto": "Essa descoberta realmente importante mudou tudo para nós."}]
         self.assertEqual(len(validar_cortes([candidate], 20, segments)), 1)
+
+    def test_cutter_rejects_a_segment_that_ends_inside_a_sentence(self):
+        candidate = {
+            "titulo": "Descoberta editorial válida",
+            "segmento_inicio": 0,
+            "segmento_fim": 0,
+            "gancho": "A descoberta",
+            "promessa": "a ideia principal",
+            "virada": "o contraste aparece",
+            "conclusao": "a ideia se fecha",
+            "autossuficiente": True,
+            "promocional": False,
+            "pontuacoes": {chave: 100 for chave in ("distintividade", "gancho", "clareza_promessa", "autossuficiencia", "compartilhabilidade", "evidencia")},
+        }
+        segments = [{"indice": 0, "inicio": 0, "fim": 20, "texto": "A descoberta mudou tudo para"}]
+        self.assertEqual(validar_cortes([candidate], 20, segments, score_minimo=0), [])
+
+    def test_cutter_expands_a_split_sentence_to_the_next_segment(self):
+        candidate = {
+            "titulo": "Descoberta editorial válida",
+            "segmento_inicio": 0,
+            "segmento_fim": 0,
+            "gancho": "A descoberta",
+            "promessa": "a ideia principal",
+            "virada": "o contraste aparece",
+            "conclusao": "a ideia se fecha",
+            "autossuficiente": True,
+            "promocional": False,
+            "pontuacoes": {chave: 100 for chave in ("distintividade", "gancho", "clareza_promessa", "autossuficiencia", "compartilhabilidade", "evidencia")},
+        }
+        segments = [
+            {"indice": 0, "inicio": 0, "fim": 10, "texto": "A descoberta mudou"},
+            {"indice": 1, "inicio": 10, "fim": 20, "texto": "tudo para nós."},
+        ]
+        result = validar_cortes([candidate], 20, segments, score_minimo=0)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["segmento_fim"], 1)
+        self.assertEqual(result[0]["fim"], 20)
 
     def test_radar_has_search_and_primary_rss_sources(self):
         sources = _rss_source_urls("eventos São Paulo", include_primary=True, topic="Viagem ao litoral")

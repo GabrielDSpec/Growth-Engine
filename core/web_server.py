@@ -2,6 +2,7 @@ from core.transcriber import TranscriptionCancelled, transcrever_arquivo_local_s
 import json
 import mimetypes
 import os
+import subprocess
 import threading
 import time
 import uuid
@@ -13,11 +14,11 @@ from urllib.parse import parse_qs, urlparse
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 from core.database import get_connection, init_db, salvar_perfil_google
-from core.cutter import gerar_cortes_com_retry, garimpar_vacas_roxas, calcular_score_observavel
-from core.cutter import normalizar_titulo_corte
+from core.cutter import gerar_cortes_com_retry, garimpar_vacas_roxas, calcular_score_observavel, refinar_titulos_com_ia
+from core.cutter import normalizar_titulo_corte, refinar_titulo_corte
 from core.config import MAX_UPLOAD_BYTES, PASTA_LONGOS, PASTA_SHORTS, UPLOAD_CHUNK_BYTES, obter_pastas_midia
 from core.cuts_repository import create_cut, update_cut, list_cuts
-from core.media_tools import MediaToolError, validar_ferramentas, renderizar_corte
+from core.media_tools import MediaToolError, validar_ferramentas, renderizar_corte, localizar_ferramentas
 from core.sync_channel import sincronizar_canal_youtube
 from core.content_intelligence import analisar_videos_longos, obter_status_analises
 from core.radar import buscar_radar, obter_localizacao, salvar_localizacao
@@ -98,13 +99,14 @@ def _local_media_title(path):
 
 
 def _present_cut_score(cut):
+    titled = {**cut, "titulo": refinar_titulo_corte(cut.get("titulo"), cut.get("gancho"))}
     if float(cut.get("score_vaca_roxa") or 0) > 0:
-        return cut
+        return titled
     text = " ".join(filter(None, (cut.get("gancho"), cut.get("promessa"), cut.get("virada"), cut.get("conclusao"))))
     if not text:
-        return cut
+        return titled
     score = calcular_score_observavel(text, [{"texto": cut.get("gancho") or text}])
-    return {**cut, "score_vaca_roxa": score["score"], "pontuacoes": score["pontuacoes"]}
+    return {**titled, "score_vaca_roxa": score["score"], "pontuacoes": score["pontuacoes"]}
 
 
 def _youtube_video_url(url):
@@ -339,6 +341,7 @@ def _video_dict(row):
     return {
         "id": row["video_id"],
         "title": row["titulo"] or "Sem título",
+        "thumbnail_url": f"https://i.ytimg.com/vi/{row['video_id']}/hqdefault.jpg" if len(str(row["video_id"] or "")) == 11 else "",
         "type": "Short" if row["tipo"] == "short" else "Longo" if row["tipo"] == "video" else "Não classificado",
         "views": views,
         "views_display": _format_count(views),
@@ -421,11 +424,17 @@ def _fetch_cut_sources(perfil_id=1):
                      atualizado_em DESC
             LIMIT 30
         """, (perfil_id,)).fetchall()
-        return [{
-            **_video_dict(row),
-            "has_transcription": bool(row["transcricao"]),
-            "has_segments": bool(row["transcricao_segmentos"]),
-        } for row in rows]
+        videos = []
+        for row in rows:
+            video = {
+                **_video_dict(row),
+                "has_transcription": bool(row["transcricao"]),
+                "has_segments": bool(row["transcricao_segmentos"]),
+            }
+            if not video["thumbnail_url"]:
+                video["thumbnail_url"] = f"/api/cuts/source-thumbnail?video_id={video['id']}&perfil_id={perfil_id}"
+            videos.append(video)
+        return videos
     finally:
         conn.close()
 
@@ -477,6 +486,35 @@ def _local_source_path(video_id, perfil_id):
         and (not title or entry.name.split("_", 2)[-1].lower() == title)
     ]
     return max(matches, key=os.path.getmtime) if matches else None
+
+
+def _cut_cycle_name(video_title, job_id):
+    return f"{video_title} · ciclo {str(job_id)[:8]}"
+
+
+def _source_thumbnail_path(video_id, perfil_id):
+    source_path = _local_source_path(video_id, perfil_id)
+    if not source_path:
+        return None
+    thumbnail_dir = os.path.join(obter_pastas_midia(perfil_id)["downloads"], ".thumbnails")
+    thumbnail_path = os.path.join(thumbnail_dir, f"{video_id}.jpg")
+    if os.path.isfile(thumbnail_path) and os.path.getsize(thumbnail_path) > 0:
+        return thumbnail_path
+    try:
+        ffmpeg, _ = localizar_ferramentas()
+        os.makedirs(thumbnail_dir, exist_ok=True)
+        result = subprocess.run(
+            [ffmpeg, "-y", "-ss", "1", "-i", source_path, "-frames:v", "1", "-vf", "scale=640:-2", thumbnail_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode == 0 and os.path.isfile(thumbnail_path) and os.path.getsize(thumbnail_path) > 0:
+            return thumbnail_path
+    except (OSError, subprocess.SubprocessError, MediaToolError):
+        pass
+    return None
 
 
 def _save_local_transcription(video_id, perfil_id, source_path, segments):
@@ -579,6 +617,8 @@ def _run_cut_job(job_id, video_id, perfil_id, duracao_minima=30, duracao_maxima=
         _raise_if_cancelled(job_id)
         analysis = gerar_cortes_com_retry(segmented_text, duration, segments, duracao_minima=duracao_minima, duracao_maxima=duracao_maxima, progress_callback=update_analysis_progress)
         _raise_if_cancelled(job_id)
+        refinar_titulos_com_ia(analysis.get("cortes", []))
+        refinar_titulos_com_ia(analysis.get("candidatos", []))
         suggestions = analysis["cortes"]
         conn = get_connection()
         try:
@@ -600,9 +640,9 @@ def _run_cut_job(job_id, video_id, perfil_id, duracao_minima=30, duracao_maxima=
         if analysis["status"] != "completed":
             validar_ferramentas()
             persisted_candidates = []
+            cycle_name = _cut_cycle_name(video_title, job_id)
             for candidate in analysis.get("candidatos", []):
-                round_number = candidate.get("numero_rodada", 1)
-                round_name = f"{video_title}-curadoria-{round_number:02d}"
+                round_name = cycle_name
                 cut_id = create_cut(job_id, video_id, source_path, candidate, perfil_id=perfil_id, status="candidato", video_title=video_title, round_name=round_name)
                 output_name = f"{video_id}_{cut_id}_{normalizar_titulo_corte(candidate.get('titulo')) or 'candidato'}.mp4"
                 output_path = os.path.join(obter_pastas_midia(perfil_id)["shorts"], output_name)
@@ -622,9 +662,10 @@ def _run_cut_job(job_id, video_id, perfil_id, duracao_minima=30, duracao_maxima=
             return
         validar_ferramentas()
         persisted = []
+        cycle_name = _cut_cycle_name(video_title, job_id)
         for suggestion in suggestions:
             _raise_if_cancelled(job_id)
-            cut_id = create_cut(job_id, video_id, source_path, suggestion, perfil_id=perfil_id)
+            cut_id = create_cut(job_id, video_id, source_path, suggestion, perfil_id=perfil_id, video_title=video_title, round_name=cycle_name)
             output_name = f"{video_id}_{cut_id}_{normalizar_titulo_corte(suggestion.get('titulo')) or 'corte'}.mp4"
             output_path = os.path.join(obter_pastas_midia(perfil_id)["shorts"], output_name)
             try:
@@ -966,6 +1007,20 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/cuts":
             video_id = parse_qs(parsed.query).get("video_id", [None])[0]
             self._send_json({"cortes": [_present_cut_score(cut) for cut in list_cuts(video_id=video_id, perfil_id=self.request_profile_id)]})
+            return
+        if parsed.path == "/api/cuts/source-thumbnail":
+            video_id = parse_qs(parsed.query).get("video_id", [""])[0]
+            thumbnail_path = _source_thumbnail_path(video_id, self.request_profile_id)
+            if not thumbnail_path:
+                self.send_error(404, "Miniatura não disponível")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.send_header("Content-Length", str(os.path.getsize(thumbnail_path)))
+            self.end_headers()
+            with open(thumbnail_path, "rb") as thumbnail:
+                self.wfile.write(thumbnail.read())
             return
         if parsed.path == "/api/cuts/file":
             cut_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -1341,6 +1396,26 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                 self._send_json({"deleted": cut_id})
             except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
                 self._send_json({"error": f"Exclusão inválida: {error}"}, status=400)
+            return
+        if parsed.path == "/api/cuts/delete-cycle":
+            try:
+                payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
+                video_id = str(payload.get("video_id") or "")
+                round_name = str(payload.get("nome_rodada") or "")
+                cycle_cuts = [cut for cut in list_cuts(video_id=video_id, perfil_id=self.request_profile_id) if cut.get("nome_rodada") == round_name]
+                if not video_id or not round_name or not cycle_cuts:
+                    raise ValueError("Ciclo de cortes não encontrado.")
+                for cut in cycle_cuts:
+                    output_path = cut.get("caminho_saida")
+                    if output_path and os.path.isfile(output_path):
+                        try:
+                            os.remove(output_path)
+                        except OSError:
+                            pass
+                    update_cut(cut["id"], status="excluido", selected=0, perfil_id=self.request_profile_id)
+                self._send_json({"deleted": len(cycle_cuts)})
+            except (ValueError, json.JSONDecodeError) as error:
+                self._send_json({"error": str(error)}, status=400)
             return
         if parsed.path == "/api/cuts/schedule":
             try:

@@ -10,6 +10,13 @@
 - Os candidatos aparecem em uma grade compacta; cada item expande individualmente para assistir, selecionar, baixar, excluir ou agendar.
 - A rota de mídia suporta `Range`/`206 Partial Content`, permitindo reprodução e avanço no player HTML5.
 - Scores zerados de candidatos antigos são recalculados na API com sinais observáveis da transcrição.
+- A Central organiza os cortes em menus por vídeo original e, dentro dele, por ciclo de análise identificado pelo job da sessão.
+- O título solicitado à IA é uma manchete de YouTube específica, completa e engajante, baseada literalmente no conteúdo do corte.
+- A prévia do vídeo usa proporção vertical 9:16, com título acima, arquivo fonte abaixo e score numérico colorido sobre o canto superior esquerdo.
+- A revisão abre em modal com fundo escurecido e blur; as ações Editar, Renderizar e Excluir ficam ao lado do player.
+- A interface permite excluir um ciclo inteiro, marcando seus cortes como excluídos e removendo os MP4s gerados.
+- A validação semântica rejeita limites no meio de frases e amplia segmentos Whisper até o encerramento da frase, dentro da duração máxima.
+- O contrato da Qwen sinaliza a oportunidade editorial `gancho_contexto_retorno`, sem inventar falas ou timestamps.
 
 **Status:** em implementacao
 **Progresso:** 95%
@@ -58,6 +65,12 @@ Cada rodada deve manter `perfil_id`, `video_id`, `video_titulo`, `job_id`, `nume
 - [x] Progresso em tempo real informa rodada, candidatos recebidos e candidatos válidos.
 - [x] Grade expansível e streaming parcial permitem assistir cada candidato antes da aprovação.
 - [x] Score observável substitui o zero quando a IA não fornece subnotas.
+- [x] Sessões repetidas do mesmo vídeo ficam separadas por ciclo no histórico visual.
+- [x] Card vertical exibe prévia 9:16, título editorial, arquivo fonte e score sem badge vermelho.
+- [x] Modal de edição usa o MP4 renderizado como player 9:16 e mantém o fundo desfocado.
+- [x] Ciclos podem ser excluídos com rótulo amigável de ciclo/rodada e limpeza do arquivo gerado.
+- [x] Fronteiras de cortes preservam frases completas, incluindo expansão de segmentos Whisper truncados.
 - [ ] Persistir payload bruto completo de cada resposta da Qwen.
 - [ ] Persistir motivo individual para cada rejeicao estrutural.
 - [ ] Exibir historico completo de rodadas por video.
+- [ ] Montar fisicamente cortes não contínuos no formato gancho, contexto e retorno ao destaque.

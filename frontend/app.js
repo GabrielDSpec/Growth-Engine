@@ -939,41 +939,113 @@ async function renderSelectedCuts() {
     showToast(error.message);
   }
 }
+async function renderSingleCut(cutId) {
+  selectedCandidateIds.add(cutId);
+  await renderSelectedCuts();
+}
 function renderCutCard(cut, options = {}) {
   const cutId = Number(cut.cut_id || cut.id);
   const status = cut.status || 'candidato';
   const outputAvailable = status === 'concluido' && (cut.output_path || cut.caminho_saida);
   const canSelect = ['candidato', 'concluido', 'selecionado'].includes(status);
-  const card = createElement('details', { className: `cut-card ${options.candidate ? 'candidate-row' : ''}` });
-  const header = createElement('div', { className: 'cut-card-header' }, [
-    domText('span', 'cut-status', options.statusLabel || (status === 'concluido' ? 'Renderizado' : 'Para revisar')),
-    domText('span', 'score-meter', `Score ${Number(cut.score_vaca_roxa || 0).toFixed(0)}/100`),
-  ]);
-  const summary = createElement('summary', { className: 'cut-card-summary' }, [header, domText('h3', '', cut.titulo || 'Corte sem título'), domText('p', 'cut-card-meta', `${Number(cut.inicio ?? cut.inicio_segundos ?? 0).toFixed(1)}s — ${Number(cut.fim ?? cut.fim_segundos ?? 0).toFixed(1)}s · ${cut.video_titulo || selectedCutSource?.title || 'Vídeo fonte'}`)]);
-  card.appendChild(summary);
-  const body = createElement('div', { className: 'cut-card-body' });
+  const score = Math.max(0, Math.min(100, Number(cut.score_vaca_roxa || 0)));
+  const title = cut.titulo || 'Corte editorial';
+  const card = createElement('article', { className: `cut-card ${options.candidate ? 'candidate-row' : ''}` });
+  const header = createElement('div', { className: 'cut-card-header' }, [domText('span', 'cut-status', options.statusLabel || (status === 'concluido' ? 'Renderizado' : 'Para revisar'))]);
+  const scoreBadge = domText('span', 'score-meter', score.toFixed(0));
+  scoreBadge.style.setProperty('--cut-score', String(score));
+  const preview = createElement('div', { className: 'cut-preview' }, [scoreBadge]);
   if (outputAvailable) {
     const video = createElement('video', { className: 'cut-player', controls: 'true', preload: 'metadata' });
-    video.src = `/api/cuts/file?id=${encodeURIComponent(cutId)}`;
+    video.src = `/api/cuts/file?id=${encodeURIComponent(cutId)}&perfil_id=${encodeURIComponent(activeProfileId)}`;
     video.setAttribute('aria-label', `Prévia de ${cut.titulo || 'corte'}`);
-    body.appendChild(video);
+    preview.insertBefore(video, scoreBadge);
   } else if (status === 'falhou') {
-    body.appendChild(domText('p', 'cut-error', cut.erro || cut.error || 'A renderização falhou.'));
+    preview.appendChild(domText('p', 'cut-error', cut.erro || cut.error || 'A renderização falhou.'));
   }
-  body.appendChild(domText('p', 'cut-card-copy', cut.gancho || 'Trecho ancorado na transcrição para avaliação humana.'));
-  const actions = createElement('div', { className: 'cut-card-actions' });
+  const actions = createElement('div', { className: 'cut-card-actions' }, [domButton('Editar', 'pencil', 'secondary', 'edit-cut', { 'data-cut-id': cutId })]);
   if (canSelect) actions.appendChild(createElement('label', { className: 'cut-select' }, [createElement('input', { type: 'checkbox', checked: selectedCandidateIds.has(cutId) ? 'true' : null, 'data-action': options.toggleAction || 'candidate-toggle', 'data-cut-id': cutId }), ' Selecionar para postagem']));
+  if (canSelect) actions.appendChild(domButton('Renderizar', 'scissors', 'secondary', 'render-cut', { 'data-cut-id': cutId }));
   if (outputAvailable) {
-    const download = setSafeLink(createElement('a', { className: 'button secondary' }), `/api/cuts/file?id=${encodeURIComponent(cutId)}`);
-    download.setAttribute('download', `${(cut.titulo || 'corte').replace(/[^a-z0-9]+/gi, '_')}.mp4`);
+    const download = setSafeLink(createElement('a', { className: 'button secondary' }), `/api/cuts/file?id=${encodeURIComponent(cutId)}&perfil_id=${encodeURIComponent(activeProfileId)}`);
+    download.setAttribute('download', `${title.replace(/[^a-z0-9]+/gi, '_')}.mp4`);
     download.append(domIcon('download'), ' Baixar MP4');
     actions.appendChild(download);
     actions.appendChild(domButton('Agendar postagem', 'calendar-plus', 'secondary', 'schedule-cut', { 'data-cut-id': cutId }));
   }
   if (canSelect || outputAvailable) actions.appendChild(domButton('Excluir', 'trash-2', 'danger', 'delete-cut', { 'data-cut-id': cutId }));
-  body.appendChild(actions);
-  card.appendChild(body);
+  card.append(header, domText('h3', 'cut-title', title), preview, domText('p', 'cut-card-meta', cut.video_titulo || selectedCutSource?.title || 'Vídeo fonte'), actions);
   return card;
+}
+function openCutEditor(cut) {
+  closeCutEditor();
+  const cutId = Number(cut.cut_id || cut.id);
+  const modal = createElement('div', { className: 'cut-modal-backdrop', 'data-action': 'close-cut-editor' });
+  const panel = createElement('section', { className: 'cut-modal', role: 'dialog', 'aria-modal': 'true' });
+  const close = domButton('Fechar', 'x', 'secondary', 'close-cut-editor');
+  panel.appendChild(createElement('div', { className: 'cut-modal-header' }, [domText('h2', '', cut.titulo || 'Editar corte'), close]));
+  const card = renderCutCard(cut, { candidate: false, statusLabel: cut.status === 'concluido' ? 'Renderizado' : 'Para revisar' });
+  panel.appendChild(card);
+  modal.appendChild(panel);
+  document.body.appendChild(modal);
+  modal.addEventListener('click', event => { if (event.target === modal) closeCutEditor(); });
+}
+function closeCutEditor() { document.querySelector('.cut-modal-backdrop')?.remove(); }
+async function deleteCutCycle(videoId, roundName) {
+  if (!confirm('Excluir todos os cortes desta rodada?')) return;
+  try {
+    const response = await fetch('/api/cuts/delete-cycle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ video_id: videoId, nome_rodada: roundName }) });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível excluir a rodada.');
+    await reloadSelectedCutData();
+    renderCuts();
+    showToast(`${payload.deleted} cortes excluídos.`);
+  } catch (error) { showToast(error.message); }
+}
+function reviewCutGroups(cuts) {
+  const groups = new Map();
+  cuts.forEach(cut => {
+    const videoKey = cut.video_id || cut.video_titulo || 'video-sem-identificacao';
+    if (!groups.has(videoKey)) groups.set(videoKey, { title: cut.video_titulo || cut.video_id || 'Vídeo original', cycles: new Map() });
+    const video = groups.get(videoKey);
+    const cycleKey = cut.nome_rodada || `Ciclo ${Number(cut.numero_rodada || 1)}`;
+    if (!video.cycles.has(cycleKey)) video.cycles.set(cycleKey, []);
+    video.cycles.get(cycleKey).push(cut);
+  });
+  return [...groups.values()];
+}
+function renderReviewGroups(cuts, toggleAction = 'candidate-toggle') {
+  const root = createElement('div', { className: 'cut-groups' });
+  reviewCutGroups(cuts).forEach(video => {
+    const videoGroup = createElement('details', { className: 'cut-video-group', open: 'true' });
+    videoGroup.appendChild(createElement('summary', { className: 'cut-group-summary' }, [domText('strong', '', video.title), domText('span', '', `${[...video.cycles.values()].reduce((total, cycle) => total + cycle.length, 0)} cortes`)]));
+    const cycles = createElement('div', { className: 'cut-cycles' });
+    [...video.cycles.entries()].forEach(([cycleName, cycleCuts], cycleIndex) => {
+      const cycleGroup = createElement('details', { className: 'cut-cycle-group', open: 'true' });
+      const roundNumber = Number(cycleCuts[0]?.numero_rodada || 1);
+      const cycleHeader = createElement('div', { className: 'cut-cycle-summary' }, [domText('strong', '', `Ciclo ${cycleIndex + 1} · Rodada ${roundNumber}`), domText('span', '', `${cycleCuts.length} cortes`), domButton('Excluir ciclo', 'trash-2', 'danger', 'delete-cut-cycle', { 'data-video-id': cycleCuts[0]?.video_id || '', 'data-round-name': cycleName })]);
+      cycleGroup.appendChild(cycleHeader);
+      const list = createElement('div', { className: 'suggestion-list' });
+      [...cycleCuts].sort((left, right) => Number(right.score_vaca_roxa || 0) - Number(left.score_vaca_roxa || 0)).forEach((cut, index) => {
+        const status = cut.status || 'candidato';
+        const statusLabel = status === 'concluido' ? 'Renderizado' : status === 'selecionado' ? 'Selecionado' : 'Para revisar';
+        list.appendChild(renderCutCard(cut, { candidate: true, toggleAction, statusLabel: status === 'candidato' ? `Candidato ${String(index + 1).padStart(2, '0')}` : statusLabel }));
+      });
+      cycleGroup.appendChild(list);
+      cycles.appendChild(cycleGroup);
+    });
+    videoGroup.appendChild(cycles);
+    root.appendChild(videoGroup);
+  });
+  return root;
+}
+function allReviewCuts() {
+  const byId = new Map();
+  [...persistedCuts, ...cutSuggestions].forEach(cut => {
+    const key = cut.cut_id || cut.id || `${cut.video_id}-${cut.nome_rodada}-${cut.inicio}`;
+    if (!byId.has(key)) byId.set(key, cut);
+  });
+  return [...byId.values()].filter(cut => cut.status !== 'excluido');
 }
 async function runTranscription() {
   if (!selectedCutSource) return showToast('Selecione um vídeo longo primeiro.');
@@ -1219,15 +1291,13 @@ function renderCuts() {
     ]),
   ]);
   root.appendChild(durationPanel);
-  const persistedPanel = createElement('section', { className: 'panel cut-review' }, [domPanelHeader('Cortes gerados', 'Estado persistido de cada renderização')]);
-  const persistedList = createElement('div', { className: 'suggestion-list' });
-  const statusLabel = { pendente: 'Pendente', candidato: 'Para revisar', renderizando: 'Renderizando', concluido: 'Renderizado', falhou: 'Falhou', excluido: 'Excluído' };
-  persistedCuts.forEach(cut => {
-    const status = cut.status || 'pendente';
-    persistedList.appendChild(renderCutCard(cut, { statusLabel: statusLabel[status] || status }));
-  });
-  if (!persistedCuts.length) persistedList.appendChild(domText('p', 'empty-state', 'Nenhum corte persistido ainda.'));
-  persistedPanel.appendChild(persistedList);
+  const candidateToggleAction = 'candidate-toggle';
+  const candidateTitle = cutSuggestions.find(cut => cut.titulo)?.titulo || '';
+  const candidateHook = cutSuggestions.find(cut => cut.gancho)?.gancho || '';
+  const persistedPanel = createElement('section', { className: 'panel cut-review' }, [domPanelHeader('Cortes gerados', candidateTitle ? `Último título sugerido: ${candidateTitle}` : candidateHook ? `Gancho: ${candidateHook}` : 'Estado persistido de cada renderização')]);
+  const reviewCuts = allReviewCuts();
+  persistedPanel.appendChild(reviewCuts.length ? renderReviewGroups(reviewCuts, candidateToggleAction) : domText('p', 'empty-state', 'Nenhum corte persistido ainda.'));
+  if (reviewCuts.some(cut => ['candidato', 'concluido', 'selecionado'].includes(cut.status))) persistedPanel.appendChild(domButton('Selecionar para postagem e renderizar', 'scissors', 'lime', 'render-selected-cuts'));
   root.appendChild(persistedPanel);
   const reviewJob = [cutJob, transcriptionJob].find(job => job?.status === 'needs_review');
   if (reviewJob) {
@@ -1259,17 +1329,6 @@ function renderCuts() {
   if (!segments.length && selectedCutSource && !transcriptionJob) actions.appendChild(domButton('Transcrever vídeo', 'audio-lines', 'lime', 'transcribe'));
   if (segments.length && (!cutJob || cutJob.status === 'needs_review')) actions.appendChild(domButton('Gerar cortes', 'scissors', 'lime', 'preview'));
   body.appendChild(actions);
-  if (cutSuggestions.length) {
-    const suggestions = createElement('div', { className: 'suggestion-list' });
-    const candidateToggleAction = 'candidate-toggle';
-    cutSuggestions.forEach((cut, index) => {
-      const candidateTitle = cut.titulo;
-      const candidateHook = cut.gancho;
-      suggestions.appendChild(renderCutCard({ ...cut, titulo: candidateTitle, gancho: candidateHook }, { candidate: true, toggleAction: candidateToggleAction, statusLabel: cut.status === 'concluido' ? 'Renderizado' : `Candidato ${String(index + 1).padStart(2, '0')}` }));
-    });
-    body.appendChild(suggestions);
-    if (cutSuggestions.some(cut => cut.status === 'candidato' || cut.status === 'concluido' || cut.status === 'selecionado')) body.appendChild(domButton('Selecionar para postagem e renderizar', 'scissors', 'lime', 'render-selected-cuts'));
-  }
   review.appendChild(body);
   root.appendChild(review);
   replaceView(root);
@@ -1324,7 +1383,19 @@ document.addEventListener('click', (event) => { if (event.target.closest('[data-
 document.addEventListener('click', (event) => { const briefingAction = event.target.closest('[data-action="briefing"]'); if (briefingAction) showBriefingPanel(briefingAction.dataset.opportunityId); });
 document.addEventListener('click', (event) => { if (event.target.closest('[data-action="upload-local"]')) uploadLocalMedia(); if (event.target.closest('[data-action="force-download"]')) forceDownloadMedia(); });
 document.addEventListener('click', (event) => { if (event.target.closest('[data-action="render-selected-cuts"]')) renderSelectedCuts(); });
-document.addEventListener('click', (event) => { const deleteButton = event.target.closest('[data-action="delete-cut"]'); if (deleteButton) deleteCut(Number(deleteButton.dataset.cutId)); const scheduleButton = event.target.closest('[data-action="schedule-cut"]'); if (scheduleButton) scheduleCut(Number(scheduleButton.dataset.cutId)); });
+document.addEventListener('click', (event) => {
+  const editButton = event.target.closest('[data-action="edit-cut"]');
+  if (editButton) { const cut = allReviewCuts().find(item => Number(item.cut_id || item.id) === Number(editButton.dataset.cutId)); if (cut) openCutEditor(cut); return; }
+  if (event.target.closest('[data-action="close-cut-editor"]')) { closeCutEditor(); return; }
+  const cycleButton = event.target.closest('[data-action="delete-cut-cycle"]');
+  if (cycleButton) { deleteCutCycle(cycleButton.dataset.videoId, cycleButton.dataset.roundName); return; }
+  const renderButton = event.target.closest('[data-action="render-cut"]');
+  if (renderButton) { renderSingleCut(Number(renderButton.dataset.cutId)); return; }
+  const deleteButton = event.target.closest('[data-action="delete-cut"]');
+  if (deleteButton) { deleteCut(Number(deleteButton.dataset.cutId)); return; }
+  const scheduleButton = event.target.closest('[data-action="schedule-cut"]');
+  if (scheduleButton) scheduleCut(Number(scheduleButton.dataset.cutId));
+});
 document.addEventListener('click', (event) => { if (event.target.closest('[data-action="cancel-job"]')) cancelActiveJob(); });
 document.addEventListener('click', (event) => { const option = event.target.closest('[data-action="profile-option"]'); if (option) selectProfile(option.dataset.profileId); });
 document.addEventListener('click', (event) => { if (event.target.closest('[data-action="profile-add"]')) addProfile(); if (event.target.closest('[data-action="profile-remove"]')) removeActiveProfile(); });

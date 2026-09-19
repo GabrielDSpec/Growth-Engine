@@ -6,8 +6,8 @@ import subprocess
 import cv2
 import requests
 from tqdm import tqdm
-from core.media_tools import renderizar_corte
-from core.config import DIRETORIO_PROJETO, PASTA_LONGOS, PASTA_SHORTS, PASTA_ARQUIVO
+from core.media_tools import MediaToolError, _run, localizar_ferramentas, obter_duracao
+from core.config import DIRETORIO_PROJETO, PASTA_LONGOS, PASTA_SHORTS, PASTA_ARQUIVO, obter_pastas_midia
 from core.utils import registrar_log, carregar_cache_metadados, salvar_cache_metadados, calcular_hash_arquivo
 from core.transcriber import transcrever_arquivo_local_segmentos
 
@@ -31,11 +31,21 @@ def _montar_prompt(transcricao_texto, duracao_total_seg, segmentos, tentativa, c
     O trecho deve ser uma sequência contínua de segmentos e a diferença entre o primeiro início e o último fim
     precisa ficar entre {duracao_minima} e {duracao_maxima} segundos. Nunca selecione apenas um segmento curto
     para depois tentar completar a duração com texto inventado.
-    Para cada corte, crie um título em pt-BR com no máximo 55 caracteres.
-    O título deve usar uma palavra-chave ou entidade realmente presente no trecho, deixar claro o conflito,
-    descoberta ou resultado, e despertar curiosidade sem clickbait. Não use #shorts, emojis ou afirmações ausentes.
+    Os limites precisam preservar frases completas: comece no início de uma ideia, não no meio de uma frase,
+    e termine somente depois de uma frase concluída (pontuação final ou encerramento inequívoco da fala).
+    Nunca corte palavra, oração ou contexto no meio. Se o Whisper dividiu uma frase em vários segmentos,
+    inclua todos os segmentos necessários para fechá-la, respeitando a duração máxima.
+    Para cada corte, crie um título editorial em pt-BR com 35 a 55 caracteres, pronto para ser usado no YouTube.
+    O título deve ser uma manchete natural, específica e engajante: use uma palavra-chave ou entidade realmente
+    presente no trecho, deixe claro o conflito, descoberta ou resultado e crie curiosidade honesta. Não copie uma
+    frase inteira da transcrição, não use reticências, não entregue um fragmento sem verbo e não comece com
+    "Trecho", "Corte" ou "Parte". Não use #shorts, emojis, promessa exagerada ou afirmações ausentes.
         Aprove um corte somente se ele tiver uma única ideia, conflito ou contraste claro, começo autossuficiente,
         desenvolvimento e conclusão. O início deve conter o gancho, sem saudação ou contexto dependente de outro vídeo.
+        Quando um destaque forte aparecer mais tarde no trecho, você pode sinalizar a montagem
+        "gancho_contexto_retorno": use uma frase literal do destaque como gancho inicial, depois o contexto,
+        e retorne ao momento do destaque. Isso é uma oportunidade editorial, não uma licença para inventar
+        texto ou timestamps; todos os elementos precisam existir na transcrição.
         Rejeite cortes que sejam apenas introdução, explicação genérica, anúncio, chamada para curso, cupom ou autopromoção.
         Não corte uma frase no meio. Cada corte deve ter entre {duracao_minima} e {duracao_maxima} segundos, conforme a faixa escolhida pelo usuário.
         Dê seis subnotas independentes de 0 a 100. Elas medem potencial editorial observável, não desempenho garantido:
@@ -56,6 +66,9 @@ def _montar_prompt(transcricao_texto, duracao_total_seg, segmentos, tentativa, c
             "segmento_inicio": int,
             "segmento_fim": int,
             "gancho": "frase ou ideia literal do início do trecho",
+            "montagem": "continua ou gancho_contexto_retorno",
+            "gancho_inicio": "frase literal usada como abertura, se houver",
+            "destaque": "frase literal do momento de maior destaque",
             "promessa": "o que o espectador entenderá",
             "virada": "contraste ou descoberta presente no trecho",
             "conclusao": "como a ideia se fecha no próprio trecho",
@@ -138,6 +151,12 @@ def _candidatos_para_revisao(candidatos, segmentos, duracao_total_seg, duracao_m
         inicio_indice, fim_indice, selecionados = intervalo
         if not selecionados:
             continue
+        intervalo_frase = _ajustar_limites_para_frases(selecionados, segmentos, duracao_maxima)
+        if not intervalo_frase:
+            continue
+        _, _, selecionados = intervalo_frase
+        inicio_indice = selecionados[0]["indice"]
+        fim_indice = selecionados[-1]["indice"]
         inicio = selecionados[0]["inicio"]
         fim = selecionados[-1]["fim"]
         if not (0 <= inicio < fim <= duracao_total_seg) or not duracao_minima <= fim - inicio <= duracao_maxima:
@@ -190,6 +209,37 @@ def _selecionar_segmentos_candidato(candidato, segmentos):
     return selecionados[0]["indice"], selecionados[-1]["indice"], selecionados
 
 
+def _termina_frase(texto):
+    return bool(re.search(r"[.!?…](?:[\"'»)]*)$", (texto or "").strip()))
+
+
+def _comeca_continuacao(texto, tem_anterior=True):
+    texto = (texto or "").strip()
+    if not texto:
+        return True
+    palavras = texto.lower().split()
+    conectores = {"e", "mas", "porque", "que", "quando", "como", "então", "pois", "só", "também"}
+    return texto[0].islower() or (tem_anterior and bool(palavras and palavras[0] in conectores))
+
+
+def _ajustar_limites_para_frases(selecionados, segmentos, duracao_maxima):
+    """Expande limites do Whisper até uma fronteira de frase sem exceder a duração."""
+    if not selecionados:
+        return None
+    inicio_pos = segmentos.index(selecionados[0])
+    fim_pos = segmentos.index(selecionados[-1])
+    while inicio_pos > 0 and _comeca_continuacao(segmentos[inicio_pos]["texto"]):
+        inicio_pos -= 1
+    while fim_pos < len(segmentos) - 1 and not _termina_frase(segmentos[fim_pos]["texto"]):
+        if segmentos[fim_pos + 1]["fim"] - segmentos[inicio_pos]["inicio"] > duracao_maxima:
+            return None
+        fim_pos += 1
+    selecionados = segmentos[inicio_pos:fim_pos + 1]
+    if _comeca_continuacao(selecionados[0]["texto"], inicio_pos > 0) or not _termina_frase(selecionados[-1]["texto"]):
+        return None
+    return inicio_pos, fim_pos, selecionados
+
+
 def _candidatos_fallback(segmentos, duracao_total_seg, duracao_minima, duracao_maxima):
     """Cria trechos reais para revisão humana quando a saída da IA não é utilizável."""
     if not segmentos or duracao_minima <= 0 or duracao_maxima < duracao_minima:
@@ -207,7 +257,7 @@ def _candidatos_fallback(segmentos, duracao_total_seg, duracao_minima, duracao_m
             texto = " ".join(item["texto"] for item in trecho).strip()
             score_data = calcular_score_observavel(texto, trecho)
             candidatos.append({
-                "titulo": f"Trecho para revisar {len(candidatos) + 1:02d}",
+                "titulo": refinar_titulo_corte("", trecho[0]["texto"], fallback_index=len(candidatos) + 1),
                 "inicio": inicio,
                 "fim": fim,
                 "segmento_inicio": trecho[0]["indice"],
@@ -284,6 +334,43 @@ def gerar_cortes_com_retry(transcricao_texto, duracao_total_seg, segmentos=None,
     return {"status": "needs_review", "cortes": aceitos, "candidatos": revisao, "diagnostico": diagnostico, "rejeicoes": rejeicoes, "minimo": minimo}
 
 
+def refinar_titulos_com_ia(cortes):
+    """Transforma títulos brutos em manchetes editoriais sem alterar o conteúdo do corte."""
+    if not cortes:
+        return cortes
+    itens = [{
+        "indice": indice,
+        "titulo_atual": corte.get("titulo", ""),
+        "gancho": corte.get("gancho", ""),
+        "promessa": corte.get("promessa", ""),
+        "virada": corte.get("virada", ""),
+        "conclusao": corte.get("conclusao", ""),
+    } for indice, corte in enumerate(cortes)]
+    prompt = f"""Você é editor de títulos para YouTube Shorts. Reescreva os títulos dos cortes abaixo.
+Use somente fatos presentes nos campos fornecidos. Cada título deve ser uma manchete natural em pt-BR,
+específica, completa e curiosa, com 35 a 55 caracteres. Use verbo ou conflito claro, não copie uma frase
+inteira, não comece por Trecho, Corte ou Parte, não use emojis, #shorts, reticências ou clickbait.
+Retorne somente JSON no formato {{\"titulos\":[{{\"indice\":0,\"titulo\":\"...\"}}]}}.
+{json.dumps(itens, ensure_ascii=False)}"""
+    try:
+        resposta = requests.post("http://localhost:11434/api/generate", json={
+            "model": "qwen2.5:14b", "prompt": prompt, "stream": False,
+            "options": {"temperature": 0.2}, "format": "json",
+        }, timeout=90)
+        if resposta.status_code == 200:
+            payload = json.loads(resposta.json().get("response", "{}"))
+            for item in payload.get("titulos", []):
+                indice = item.get("indice")
+                titulo = normalizar_titulo_corte(item.get("titulo"))
+                if isinstance(indice, int) and 0 <= indice < len(cortes) and titulo and not re.match(r"(?i)^(trecho|corte|parte)\b", titulo):
+                    cortes[indice]["titulo"] = titulo
+    except (json.JSONDecodeError, requests.RequestException, TypeError, AttributeError):
+        pass
+    for corte in cortes:
+        corte["titulo"] = refinar_titulo_corte(corte.get("titulo"), corte.get("gancho"))
+    return cortes
+
+
 def garimpar_vacas_roxas(transcricao_texto, duracao_total_seg, segmentos=None):
     return gerar_cortes_com_retry(transcricao_texto, duracao_total_seg, segmentos)["cortes"]
 
@@ -352,7 +439,7 @@ def validar_cortes(cortes, duracao_total_seg, segmentos=None, score_minimo=70, d
     for corte in cortes:
         if not isinstance(corte, dict):
             continue
-        titulo = normalizar_titulo_corte(corte.get("titulo"))
+        titulo = refinar_titulo_corte(corte.get("titulo"), corte.get("gancho"))
         inicio = corte.get("inicio")
         fim = corte.get("fim")
         segmento_inicio = corte.get("segmento_inicio")
@@ -385,6 +472,12 @@ def validar_cortes(cortes, duracao_total_seg, segmentos=None, score_minimo=70, d
             if not intervalo:
                 continue
             segmento_inicio, segmento_fim, selecionados = intervalo
+            intervalo_frase = _ajustar_limites_para_frases(selecionados, segmentos, duracao_maxima)
+            if not intervalo_frase:
+                continue
+            _, _, selecionados = intervalo_frase
+            segmento_inicio = selecionados[0]["indice"]
+            segmento_fim = selecionados[-1]["indice"]
             inicio = selecionados[0]["inicio"]
             fim = selecionados[-1]["fim"]
             texto_selecionado = " ".join(s["texto"] for s in selecionados)
@@ -433,42 +526,128 @@ def normalizar_titulo_corte(titulo, limite=55):
         reduzido = candidato
     return reduzido or titulo[:limite].rstrip()
 
-def calcular_corte_com_rosto(caminho_video, inicio, fim):
-    cap = cv2.VideoCapture(caminho_video)
-    w_tot, h_tot = cap.get(cv2.CAP_PROP_FRAME_WIDTH), cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-    cap.release()
-    if h_tot <= 0 or w_tot <= 0: return "crop=ih*(9/16):ih"
-    w_corte = h_tot * (9/16)
-    try:
-        cap = cv2.VideoCapture(caminho_video)
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int((inicio + ((fim - inicio)/2)) * fps))
-        ret, frame = cap.read()
-        cap.release()
-        if ret:
-            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-            if os.path.exists(cascade_path):
-                rostos = cv2.CascadeClassifier(cascade_path).detectMultiScale(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), 1.1, 5, minSize=(30,30))
-                if len(rostos) > 0:
-                    cx = rostos[0][0] + (rostos[0][2]/2)
-                    return f"crop={w_corte}:{h_tot}:{max(0, min(w_tot - w_corte, cx - (w_corte/2)))}:0"
-    except: pass
-    return f"crop={w_corte}:{h_tot}:{(w_tot - w_corte)/2}:0"
 
-def cortar_com_ffmpeg(caminho_original, cortes):
+def refinar_titulo_corte(titulo, gancho="", limite=55, fallback_index=None):
+    """Garante uma manchete legível quando a IA devolve um fragmento de fala."""
+    titulo = normalizar_titulo_corte(titulo, limite)
+    if not titulo or re.match(r"(?i)^(trecho|corte|parte)\b", titulo):
+        titulo = normalizar_titulo_corte(gancho, limite)
+    if not titulo:
+        return f"Corte editorial {fallback_index:02d}" if fallback_index else "Corte editorial"
+    titulo = titulo[0].upper() + titulo[1:]
+    if titulo[-1:] in ",;:-":
+        titulo = titulo[:-1].rstrip()
+    return titulo
+
+def calcular_corte_com_rosto(caminho_video, inicio, fim):
+    """Monta um smart crop 9:16 usando o centro suavizado dos rostos amostrados."""
+    cap = cv2.VideoCapture(caminho_video)
+    w_tot = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h_tot = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    if w_tot <= 0 or h_tot <= 0:
+        cap.release()
+        raise MediaToolError("Não foi possível obter a resolução do vídeo.")
+
+    proporcao = w_tot / h_tot
+    if proporcao >= 9 / 16:
+        w_corte, h_corte = round(h_tot * 9 / 16), h_tot
+        eixo = "x"
+    else:
+        w_corte, h_corte = w_tot, min(h_tot, round(w_tot * 16 / 9))
+        eixo = "y"
+
+    centros = []
+    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    detector = cv2.CascadeClassifier(cascade_path) if os.path.exists(cascade_path) else None
+    try:
+        amostras = [float(inicio) + (float(fim) - float(inicio)) * indice / 8 for indice in range(9)]
+        for timestamp in amostras:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, round(timestamp * fps)))
+            ret, frame = cap.read()
+            if not ret or detector is None:
+                continue
+            cinza = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            rostos = detector.detectMultiScale(cinza, 1.1, 5, minSize=(30, 30))
+            if len(rostos):
+                x, y, largura, altura = max(rostos, key=lambda rosto: rosto[2] * rosto[3])
+                centros.append((x + largura / 2, y + altura / 2))
+    finally:
+        cap.release()
+
+    if centros:
+        centro_x = sum(centro[0] for centro in centros) / len(centros)
+        centro_y = sum(centro[1] for centro in centros) / len(centros)
+    else:
+        centro_x, centro_y = w_tot / 2, h_tot / 2
+
+    if eixo == "x":
+        x = max(0, min(w_tot - w_corte, round(centro_x - w_corte / 2)))
+        y = 0
+    else:
+        x = 0
+        y = max(0, min(h_tot - h_corte, round(centro_y - h_corte / 2)))
+    return f"crop={w_corte}:{h_corte}:{x}:{y},scale=1080:1920:flags=lanczos"
+
+
+def renderizar_corte_shorts(video_origem, inicio, fim, caminho_saida):
+    """Renderiza um Short vertical com padding temporal e smart crop facial."""
+    try:
+        inicio = float(inicio)
+        fim = float(fim)
+    except (TypeError, ValueError) as error:
+        raise MediaToolError("Os timestamps do corte precisam ser numéricos.") from error
+    if inicio < 0 or fim <= inicio:
+        raise MediaToolError("Timestamps do corte são inválidos.")
+
+    duracao = obter_duracao(video_origem)
+    try:
+        padding_inicio = float(os.getenv("SHORTS_PADDING_INICIO", "0.3"))
+        padding_fim = float(os.getenv("SHORTS_PADDING_FIM", "0.5"))
+    except ValueError as error:
+        raise MediaToolError("O padding dos Shorts precisa ser numérico.") from error
+    if padding_inicio < 0 or padding_fim < 0:
+        raise MediaToolError("O padding dos Shorts não pode ser negativo.")
+    inicio_render = max(0.0, inicio - padding_inicio)
+    fim_render = min(duracao, fim + padding_fim)
+    if fim_render <= inicio_render:
+        raise MediaToolError("O intervalo com padding não possui duração válida.")
+
+    ffmpeg, _ = localizar_ferramentas()
+    filtro = calcular_corte_com_rosto(video_origem, inicio_render, fim_render)
+    pasta_saida = os.path.dirname(os.path.abspath(caminho_saida))
+    os.makedirs(pasta_saida, exist_ok=True)
+    comando = [
+        ffmpeg, "-y", "-ss", f"{inicio_render:.3f}", "-to", f"{fim_render:.3f}",
+        "-i", video_origem, "-vf", filtro, "-map", "0:v:0", "-map", "0:a?",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", caminho_saida,
+    ]
+    try:
+        _run(comando, 600)
+    except Exception:
+        if os.path.exists(caminho_saida):
+            os.remove(caminho_saida)
+        raise
+    if not os.path.isfile(caminho_saida) or os.path.getsize(caminho_saida) <= 0:
+        raise MediaToolError("FFmpeg não produziu um Short válido.")
+    return caminho_saida
+
+def cortar_com_ffmpeg(caminho_original, cortes, perfil_id=1):
     sucesso = True
+    pasta_shorts = obter_pastas_midia(perfil_id)["shorts"]
     for corte in tqdm(cortes, desc="✂️ Renderizando cortes no FFmpeg"):
         titulo = normalizar_titulo_corte(corte.get("titulo")) or "corte_sem_titulo"
         t_limpo = "".join(c for c in titulo if c.isalnum() or c in " _-").replace(" ", "_")
-        saida = os.path.join(PASTA_SHORTS, f"{t_limpo}.mp4")
+        saida = os.path.join(pasta_shorts, f"{t_limpo}.mp4")
         try:
-            renderizar_corte(caminho_original, saida, corte['inicio'], corte['fim'], calcular_corte_com_rosto(caminho_original, corte['inicio'], corte['fim']))
+            renderizar_corte_shorts(caminho_original, corte['inicio'], corte['fim'], saida)
         except Exception:
             sucesso = False
             registrar_log(f"Falha ao renderizar corte em {caminho_original}")
     return sucesso
 
-def executar_cortes(dry_run=False):
+def executar_cortes(dry_run=False, perfil_id=1):
     print("========================================")
     print("✂️ FÁBRICA DE CORTES (ESTÁGIO 1)")
     print("========================================\n")
@@ -502,7 +681,7 @@ def executar_cortes(dry_run=False):
                     print(json.dumps(cortes, ensure_ascii=False, indent=2))
                 else:
                     print(f"✅ {len(cortes)} corte(s) aprovado(s) para renderização.")
-                    sucesso = cortar_com_ffmpeg(c_longo, cortes)
+                    sucesso = cortar_com_ffmpeg(c_longo, cortes, perfil_id=perfil_id)
                     if not sucesso:
                         print(f"⚠️ Arquivo mantido em 'pracortar/' porque algum corte falhou: '{video}'.")
                         continue
