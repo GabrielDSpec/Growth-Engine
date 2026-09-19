@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#101312">
+  <title>Growth Engine | Central</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Navegação principal">
+      <div class="brand-lockup">
+        <div class="brand-mark">GE</div>
+        <div>
+          <span class="brand-kicker">Growth</span>
+          <strong>Engine</strong>
+        </div>
+      </div>
+
+      <div class="workspace-switcher">
+        <div class="avatar" id="workspace-avatar">GE</div>
+        <div class="workspace-copy"><span>Workspace ativo</span><strong id="workspace-name">Carregando perfil...</strong></div>
+        <i data-lucide="chevrons-up-down" aria-hidden="true"></i>
+      </div>
+
+      <nav class="nav-group">
+        <span class="nav-label">Central</span>
+        <button class="nav-item active" data-view="overview"><i data-lucide="layout-dashboard"></i><span>Visão geral</span><b>01</b></button>
+        <button class="nav-item" data-view="ranking"><i data-lucide="trophy"></i><span>Ranking</span></button>
+        <button class="nav-item" data-view="autopsy"><i data-lucide="microscope"></i><span>Autópsia</span></button>
+        <button class="nav-item" data-view="suggestions"><i data-lucide="sparkles"></i><span>Próximos vídeos</span></button>
+        <button class="nav-item" data-view="radar"><i data-lucide="radar"></i><span>Radar local</span></button>
+        <button class="nav-item" data-view="opportunities"><i data-lucide="lightbulb"></i><span>Oportunidades</span></button>
+        <span class="nav-label nav-label-spaced">Produção</span>
+        <button class="nav-item" data-view="cuts"><i data-lucide="scissors"></i><span>Central de cortes</span><b class="badge-count">06</b></button>
+        <button class="nav-item" data-view="library"><i data-lucide="library"></i><span>Biblioteca</span></button>
+        <button class="nav-item" data-view="publishing"><i data-lucide="send"></i><span>Publicação</span></button>
+        <a class="nav-item" href="/backlog.html"><i data-lucide="clipboard-check"></i><span>Backlog</span></a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="sync-status"><span class="status-dot"></span><span>Base sincronizada</span><time id="sync-last-updated">verificando...</time></div>
+        <button class="nav-item muted" data-view="settings"><i data-lucide="settings-2"></i><span>Configurações</span></button>
+        <div class="version">LOCAL BUILD <span>0.1.0</span></div>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div class="breadcrumb"><span>Central</span><i data-lucide="chevron-right"></i><strong id="breadcrumb-current">Visão geral</strong></div>
+        <div class="topbar-actions">
+          <button class="icon-button" data-action="toggle-theme" title="Alternar tema" aria-label="Alternar tema"><i data-lucide="sun"></i></button>
+          <button class="icon-button" data-action="search-open" title="Buscar" aria-label="Buscar"><i data-lucide="search"></i></button>
+          <button class="icon-button has-notification" data-action="notifications" title="Notificações" aria-label="Notificações"><i data-lucide="bell"></i><span id="notification-dot"></span></button>
+          <div class="user-chip"><div class="user-avatar" id="google-avatar">G</div><span id="google-account-name">Conta Google</span><i data-lucide="chevron-down"></i></div>
+        </div>
+      </header>
+
+      <div id="app-view" class="view-container"></div>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>

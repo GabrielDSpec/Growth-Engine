@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101312">
+  <title>Growth Engine | Backlog</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="backlog.css">
+</head>
+<body>
+  <main class="backlog-shell">
+    <header class="backlog-header">
+      <div>
+        <span class="eyebrow">Growth Engine / Operação</span>
+        <h1>Backlog em movimento.</h1>
+        <p>Uma leitura única de épicos, features, bugs, defeitos e decisões.</p>
+      </div>
+      <div class="header-meta"><span id="last-updated">Carregando manifesto...</span><a href="/">Voltar à Central</a></div>
+    </header>
+    <section id="summary" class="summary-grid" aria-label="Resumo do backlog"></section>
+    <section class="toolbar" aria-label="Filtros do backlog">
+      <label>Tipo<select id="type-filter"><option value="all">Todos</option><option value="epic">Épicos</option><option value="feature">Features</option><option value="bug">Bugs</option><option value="defect">Defeitos</option><option value="decision">Decisões</option></select></label>
+      <label>Status<select id="status-filter"><option value="all">Todos</option><option value="done">Concluído</option><option value="in_progress">Em andamento</option><option value="planned">Planejado</option><option value="blocked">Bloqueado</option></select></label>
+      <label class="search-label">Buscar<input id="search-filter" type="search" placeholder="Título, área ou ID"></label>
+    </section>
+    <section id="groups" class="groups-grid" aria-live="polite"></section>
+    <section class="items-panel"><div class="section-heading"><div><span class="eyebrow">Acompanhamento</span><h2>Itens detalhados</h2></div><span id="item-count"></span></div><div id="items" class="items-list"></div></section>
+  </main>
+  <script src="backlog.js"></script>
+</body>
+</html>
