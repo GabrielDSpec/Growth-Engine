@@ -1112,14 +1112,14 @@ function renderReviewGroups(cuts, toggleAction = 'candidate-toggle') {
   const root = createElement('div', { className: 'cut-groups' });
   reviewCutGroups(cuts).forEach(video => {
     const videoGroup = createElement('details', { className: 'cut-video-group', open: 'true' });
-    videoGroup.appendChild(createElement('summary', { className: 'cut-group-summary' }, [domText('strong', '', video.title), domText('span', '', `${[...video.cycles.values()].reduce((total, cycle) => total + cycle.length, 0)} cortes`)]));
+    videoGroup.appendChild(createElement('summary', { className: 'cut-group-summary' }, [domText('strong', '', 'Cortes gerados'), domText('span', '', `${[...video.cycles.values()].reduce((total, cycle) => total + cycle.length, 0)} cortes · ${video.title}`)]));
     const cycles = createElement('div', { className: 'cut-cycles' });
     [...video.cycles.entries()].forEach(([cycleName, cycleCuts], cycleIndex) => {
-      const cycleGroup = createElement('details', { className: 'cut-cycle-group', open: 'true' });
-      const roundNumber = Number(cycleCuts[0]?.numero_rodada || 1);
+      const cycleGroup = createElement('details', { className: 'cut-cycle-group' });
       const cycleIds = cycleCuts.map(cut => Number(cut.cut_id || cut.id)).filter(Boolean);
-      const cycleHeader = createElement('div', { className: 'cut-cycle-summary' }, [domText('strong', '', `Ciclo ${cycleIndex + 1} · Rodada ${roundNumber}`), domText('span', '', `${cycleCuts.length} cortes`), domButton('Selecionar todos', 'check-check', 'secondary', 'select-cycle-cuts', { 'data-cut-ids': cycleIds.join(',') }), domButton('Agendar ciclo', 'calendar-plus', 'secondary', 'schedule-cycle-cuts', { 'data-cut-ids': cycleIds.join(',') }), domButton('Excluir ciclo', 'trash-2', 'danger', 'delete-cut-cycle', { 'data-video-id': cycleCuts[0]?.video_id || '', 'data-round-name': cycleName })]);
-      cycleGroup.appendChild(cycleHeader);
+      const cycleHeader = createElement('summary', { className: 'cut-cycle-summary' }, [domText('strong', '', `Ciclo ${cycleIndex + 1}`), domText('span', '', `${cycleCuts.length} cortes`)]);
+      const cycleActions = createElement('div', { className: 'cut-cycle-actions' }, [domButton('Selecionar todos', 'check-check', 'secondary', 'select-cycle-cuts', { 'data-cut-ids': cycleIds.join(',') }), domButton('Agendar ciclo', 'calendar-plus', 'secondary', 'schedule-cycle-cuts', { 'data-cut-ids': cycleIds.join(',') }), domButton('Excluir ciclo', 'trash-2', 'danger', 'delete-cut-cycle', { 'data-video-id': cycleCuts[0]?.video_id || '', 'data-round-name': cycleName })]);
+      cycleGroup.append(cycleHeader, cycleActions);
       const list = createElement('div', { className: 'suggestion-list' });
       [...cycleCuts].sort((left, right) => Number(right.score_vaca_roxa || 0) - Number(left.score_vaca_roxa || 0)).forEach((cut, index) => {
         const status = cut.status || 'candidato';

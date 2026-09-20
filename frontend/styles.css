@@ -298,7 +298,8 @@ h3 { font-size: 14px; letter-spacing: -.025em; }
 .cut-group-summary span, .cut-cycle-summary span { color: var(--muted); font: 10px 'DM Mono', monospace; }
 .cut-cycles { display: grid; gap: 8px; padding: 8px; background: color-mix(in srgb, var(--paper) 82%, var(--card)); }
 .cut-cycle-summary { padding: 9px 10px; background: var(--paper); font-size: 11px; }
-.cut-cycle-summary .button { margin-left: auto; padding: 5px 8px; font-size: 10px; }
+.cut-cycle-actions { display: flex; justify-content: flex-end; gap: 6px; padding: 0 10px 9px; background: var(--paper); }
+.cut-cycle-actions .button { padding: 5px 8px; font-size: 10px; }
 .cut-cycle-group .suggestion-list { padding: 8px; }
 .cut-card-actions { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
 .cut-card-actions { grid-column: 2; grid-row: 3 / span 2; }
