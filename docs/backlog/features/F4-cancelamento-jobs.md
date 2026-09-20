@@ -6,11 +6,15 @@ Permitir que a Central de cortes interrompa transcrições e renderizações lon
 ## Implementado
 
 - Endpoint `POST /api/jobs/{job_id}/cancel` com isolamento por `perfil_id`.
-- Estado terminal persistido como `cancelled`.
+- Estado intermediário `cancelling` persistido enquanto o worker ainda está encerrando; `cancelled` só é persistido depois da saída do worker e da liberação da chave do `TaskRunner`.
 - Workers de upload, transcrição, análise e renderização verificam o cancelamento.
 - DirectCompute AMD usa processo monitorado e encerrável.
-- Central de cortes exibe o botão de cancelamento e encerra o polling.
+- Central de cortes exibe o botão de cancelamento, mantém o polling durante `cancelling` e só libera a nova geração quando o job chega a um estado terminal.
 
-## Validação pendente
+## Validação
 
-Reiniciar o servidor quando não houver processamento ativo e validar o fluxo completo com uma transcrição e uma renderização reais.
+- `python -m py_compile core/web_server.py core/task_runner.py` passou.
+- `node --check frontend/app.js` passou.
+- `python -m unittest discover -s tests -p "test_*.py"` passou com 40 testes.
+- Reiniciar o servidor com jobs ativos continua bloqueado por segurança; o terminal interativo exige `CONTINUAR` para interromper tarefas.
+- Ainda falta validar uma transcrição/renderização real após reinício e testar o caminho completo com Qwen/FFmpeg.

@@ -855,6 +855,14 @@ async function pollCutJob() {
     renderCuts();
     if (payload.status === 'completed') {
       forgetActiveJob(cutJob.id);
+      if (String(payload.message || '').includes('YouTube')) {
+        cutJob = null;
+        await loadScheduled();
+        await reloadSelectedCutData();
+        renderCuts();
+        showToast(payload.message);
+        return;
+      }
       cutSuggestions = payload.suggestions || [];
       await loadCutSources();
       cutJob = null;
@@ -885,6 +893,10 @@ async function pollCutJob() {
       showToast(payload.message || 'O processamento dos cortes foi interrompido.');
       return;
     }
+    if (payload.status === 'cancelling') {
+      setTimeout(pollCutJob, 1000);
+      return;
+    }
     setTimeout(pollCutJob, 1000);
   } catch (error) {
     showToast('Não foi possível acompanhar a análise.');
@@ -905,13 +917,75 @@ async function deleteCut(cutId) {
     showToast(error.message);
   }
 }
+function scheduleRecommendationText(cuts) {
+  const periods = [...new Set(cuts.map(cut => cut.horario_recomendado?.periodo).filter(Boolean))];
+  const days = [...new Set(cuts.flatMap(cut => cut.horario_recomendado?.dias_preferidos || []))].sort((left, right) => left - right);
+  const dayNames = ['segundas', 'tercas', 'quartas', 'quintas', 'sextas', 'sabados', 'domingos'];
+  if (!periods.length && !days.length) return 'A IA ainda não encontrou sinais suficientes; o canal usará os melhores horários históricos.';
+  const dayText = days.length ? `Dias com maior aderência: ${days.map(day => dayNames[day]).join(', ')}.` : '';
+  const periodText = periods.length ? `Período sugerido: ${periods.join(' / ')}.` : '';
+  return `${periodText} ${dayText}`.trim();
+}
+function openScheduleDialog(cutIds, label) {
+  const cuts = allReviewCuts().filter(cut => cutIds.includes(Number(cut.cut_id || cut.id)));
+  return new Promise(resolve => {
+    const backdrop = createElement('div', { className: 'cut-modal-backdrop schedule-modal-backdrop' });
+    const panel = createElement('section', { className: 'cut-modal schedule-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'schedule-modal-title' });
+    const close = domButton('Fechar', 'x', 'ghost', 'close-schedule-dialog');
+    panel.appendChild(createElement('div', { className: 'cut-modal-header' }, [domText('h2', '', `Agendar ${label}`), close]));
+    panel.appendChild(domText('p', 'schedule-modal-lead', `${cuts.length} corte(s) selecionado(s). O horário recomendado será calculado individualmente para cada vídeo.`));
+    const recommendation = createElement('div', { className: 'schedule-recommendation' }, [
+      createElement('div', { className: 'schedule-recommendation-icon' }, [createElement('i', { 'data-lucide': 'sparkles' })]),
+      createElement('div', {}, [domText('strong', '', 'Recomendação da IA'), domText('p', '', scheduleRecommendationText(cuts))]),
+    ]);
+    panel.appendChild(recommendation);
+    const mode = createElement('div', { className: 'schedule-mode' });
+    const recommendedId = `schedule-recommended-${Date.now()}`;
+    const manualId = `schedule-manual-${Date.now()}`;
+    mode.appendChild(createElement('label', { className: 'schedule-mode-option is-active' }, [
+      createElement('input', { type: 'radio', name: 'schedule-mode', value: 'recommended', id: recommendedId, checked: 'checked' }),
+      createElement('span', {}, [domText('strong', '', 'Usar melhor horário recomendado'), domText('small', '', 'A IA escolhe o melhor dia e horário para cada corte')]),
+    ]));
+    mode.appendChild(createElement('label', { className: 'schedule-mode-option' }, [
+      createElement('input', { type: 'radio', name: 'schedule-mode', value: 'manual', id: manualId }),
+      createElement('span', {}, [domText('strong', '', 'Definir data e horário'), domText('small', '', 'Aplicar o mesmo horário aos cortes selecionados')]),
+    ]));
+    panel.appendChild(mode);
+    const manualFields = createElement('div', { className: 'schedule-manual-fields', hidden: 'hidden' }, [
+      createElement('label', {}, [domText('span', '', 'Data'), createElement('input', { type: 'date', name: 'schedule-date', min: new Date().toISOString().slice(0, 10) })]),
+      createElement('label', {}, [domText('span', '', 'Horário'), createElement('input', { type: 'time', name: 'schedule-time', value: '17:30' })]),
+    ]);
+    panel.appendChild(manualFields);
+    const actions = createElement('div', { className: 'schedule-modal-actions' }, [domButton('Cancelar', 'x', 'secondary', 'close-schedule-dialog'), domButton('Confirmar agendamento', 'calendar-check', 'primary', 'confirm-schedule-dialog')]);
+    panel.appendChild(actions);
+    backdrop.appendChild(panel);
+    document.body.appendChild(backdrop);
+    refreshIcons();
+    const finish = value => { backdrop.remove(); resolve(value); };
+    panel.querySelectorAll('input[name="schedule-mode"]').forEach(input => input.addEventListener('change', event => {
+      const isManual = event.target.value === 'manual';
+      manualFields.hidden = !isManual;
+      panel.querySelectorAll('.schedule-mode-option').forEach(option => option.classList.toggle('is-active', option.querySelector('input') === event.target));
+    }));
+    backdrop.addEventListener('click', event => { if (event.target === backdrop) finish(null); });
+    panel.addEventListener('click', event => {
+      const action = event.target.closest('[data-action]')?.dataset.action;
+      if (action === 'close-schedule-dialog') finish(null);
+      if (action === 'confirm-schedule-dialog') {
+        const isManual = panel.querySelector('input[name="schedule-mode"]:checked')?.value === 'manual';
+        const date = panel.querySelector('[name="schedule-date"]')?.value || '';
+        const time = panel.querySelector('[name="schedule-time"]')?.value || '';
+        if (isManual && (!date || !time)) return showToast('Escolha a data e o horário para continuar.');
+        finish(isManual ? { date, time } : {});
+      }
+    });
+  });
+}
 async function scheduleCut(cutId) {
-  const date = window.prompt('Data de publicação (AAAA-MM-DD):', new Date().toISOString().slice(0, 10));
-  if (!date) return;
-  const time = window.prompt('Horário de publicação (HH:MM):', '17:30');
-  if (!time) return;
+  const schedule = await openScheduleDialog([Number(cutId)], 'este corte');
+  if (!schedule) return;
   try {
-    const response = await fetch('/api/cuts/schedule', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cut_id: cutId, date, time }) });
+    const response = await fetch('/api/cuts/schedule', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cut_id: cutId, ...schedule }) });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Não foi possível agendar o corte.');
     showToast(`Corte agendado para ${payload.date} às ${payload.time}.`);
@@ -925,18 +999,17 @@ async function scheduleCut(cutId) {
 async function scheduleCuts(cutIds, label = 'cortes selecionados') {
   const ids = [...new Set(cutIds.map(Number).filter(Boolean))];
   if (!ids.length) return showToast(`Selecione pelo menos um corte para ${label}.`);
-  const date = window.prompt('Data de publicação (AAAA-MM-DD):', new Date().toISOString().slice(0, 10));
-  if (!date) return;
-  const time = window.prompt('Horário de publicação (HH:MM):', '17:30');
-  if (!time) return;
+  const schedule = await openScheduleDialog(ids, label);
+  if (!schedule) return;
   try {
-    const response = await fetch('/api/cuts/schedule-bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cut_ids: ids, date, time }) });
+    const response = await fetch('/api/cuts/schedule-bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cut_ids: ids, ...schedule }) });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Não foi possível agendar os cortes.');
-    showToast(`${payload.scheduled} ${label} agendado(s) para ${payload.date} às ${payload.time}.`);
-    await loadScheduled();
-    await reloadSelectedCutData();
+    cutJob = { id: payload.job_id, status: 'queued', progress: 0, message: 'Publicação na fila' };
+    rememberActiveJob('cut', cutJob);
+    showToast(`${label} enviados para publicação. Acompanhe a confirmação na Central.`);
     renderCuts();
+    pollCutJob();
   } catch (error) { showToast(error.message); }
 }
 function selectCycleCuts(cuts) {
@@ -1093,9 +1166,16 @@ async function cancelActiveJob() {
     if (!response.ok) throw new Error(payload.error || 'Não foi possível cancelar o processo.');
     if (cutJob?.id === activeJob.id) cutJob = { ...cutJob, ...payload };
     if (transcriptionJob?.id === activeJob.id) transcriptionJob = { ...transcriptionJob, ...payload };
-    forgetActiveJob(activeJob.id);
     renderCuts();
-    showToast('Cancelamento solicitado.');
+    if (payload.status === 'cancelling') {
+      rememberActiveJob(activeJob.kind || (cutJob?.id === activeJob.id ? 'cut' : 'transcription'), { ...activeJob, ...payload });
+      if (cutJob?.id === activeJob.id) pollCutJob();
+      else if (transcriptionJob?.id === activeJob.id) pollTranscriptionJob();
+      showToast('Cancelamento em andamento. Aguarde a liberação antes de gerar novamente.');
+    } else {
+      forgetActiveJob(activeJob.id);
+      showToast('Cancelamento concluído.');
+    }
   } catch (error) {
     showToast(error.message);
   }
@@ -1182,6 +1262,10 @@ async function pollTranscriptionJob() {
       transcriptionJob = null;
       renderCuts();
       showToast(payload.message || 'A transcrição foi interrompida.');
+      return;
+    }
+    if (payload.status === 'cancelling') {
+      setTimeout(pollTranscriptionJob, 1200);
       return;
     }
     setTimeout(pollTranscriptionJob, 1200);

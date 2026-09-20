@@ -43,7 +43,7 @@ tests/
 - O frontend deve consumir contratos HTTP e não conhecer SQL, modelos de IA ou detalhes de RSS.
 - Toda nova feature deve incluir pelo menos um teste de contrato e documentação do fluxo.
 - Operações que usam Whisper, FFmpeg ou modelos locais devem declarar o grupo de recurso e passar pelo executor pesado; não podem criar threads diretos.
-- O lock de hardware usa `video:<video_id>` e é compartilhado entre transcrição e cortes do mesmo vídeo.
+- O lock de hardware usa `video:<perfil_id>:<video_id>` e é compartilhado entre transcrição e cortes do mesmo vídeo dentro do perfil. O cancelamento é cooperativo: o endpoint sinaliza `cancelling`, e a chave só é liberada pelo `TaskRunner` quando o worker termina.
 
 ## Estado atual
 
@@ -57,7 +57,7 @@ tests/
 - A persistência da fila de análise foi separada em `core/content_analysis_repository.py`; `core/content_intelligence.py` permanece como orquestrador de Whisper e Qwen.
 - A persistência do perfil semântico foi separada em `core/content_profile_repository.py`; `core/content_profile.py` permanece como regra de classificação e agregação.
 - A persistência e seleção editorial das oportunidades foi separada em `core/opportunities_repository.py`; `core/opportunities.py` permanece como score, briefing e geração pela Qwen.
-- Jobs individuais de transcrição e cortes são persistidos em `tarefas_jobs`; jobs `queued`/`running` são marcados como `interrupted` durante a inicialização seguinte.
+- Jobs individuais de transcrição e cortes são persistidos em `tarefas_jobs`; jobs `queued`/`running` são marcados como `interrupted` durante a inicialização seguinte. A inicialização não interrompe silenciosamente jobs ativos: em terminal interativo exige `CONTINUAR`, e em terminal não interativo aborta a inicialização.
 
 ## Plano de migração
 

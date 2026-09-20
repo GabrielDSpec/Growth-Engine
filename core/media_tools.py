@@ -56,7 +56,15 @@ def obter_duracao(caminho, timeout=30):
     return duration
 
 
-def renderizar_corte(caminho_origem, caminho_saida, inicio, fim, filtro=None, timeout=600, intervalos=None):
+def _filtro_vertical(caminho_origem, inicio, fim):
+    try:
+        from core.cutter import calcular_corte_com_rosto
+        return calcular_corte_com_rosto(caminho_origem, inicio, fim)
+    except Exception:
+        return "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920:flags=lanczos"
+
+
+def renderizar_corte(caminho_origem, caminho_saida, inicio, fim, filtro=None, timeout=600, intervalos=None, vertical=False):
     ffmpeg, _ = localizar_ferramentas()
     duration = obter_duracao(caminho_origem)
     if not 0 <= float(inicio) < float(fim) <= duration:
@@ -76,9 +84,10 @@ def renderizar_corte(caminho_origem, caminho_saida, inicio, fim, filtro=None, ti
             for indice, (trecho_inicio, trecho_fim) in enumerate(normalizados):
                 parte = os.path.join(pasta_temporaria, f"parte-{indice}.mp4")
                 comando_parte = [ffmpeg, "-y", "-ss", f"{trecho_inicio:.3f}", "-to", f"{trecho_fim:.3f}", "-i", caminho_origem]
-                if filtro:
-                    comando_parte.extend(["-vf", filtro])
-                comando_parte.extend(["-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", parte])
+                filtro_parte = _filtro_vertical(caminho_origem, trecho_inicio, trecho_fim) if vertical else filtro
+                if filtro_parte:
+                    comando_parte.extend(["-vf", filtro_parte])
+                comando_parte.extend(["-map", "0:v:0", "-map", "0:a?", "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", parte])
                 _run(comando_parte, timeout)
                 partes.append(parte)
             lista = os.path.join(pasta_temporaria, "concat.txt")
@@ -90,9 +99,10 @@ def renderizar_corte(caminho_origem, caminho_saida, inicio, fim, filtro=None, ti
             raise MediaToolError("FFmpeg não produziu um arquivo composto válido.")
         return caminho_saida
     command = [ffmpeg, "-y", "-ss", str(inicio), "-to", str(fim), "-i", caminho_origem]
-    if filtro:
-        command.extend(["-vf", filtro])
-    command.extend(["-c:v", "libx264", "-c:a", "aac", caminho_saida])
+    filtro_final = _filtro_vertical(caminho_origem, float(inicio), float(fim)) if vertical else filtro
+    if filtro_final:
+        command.extend(["-vf", filtro_final])
+    command.extend(["-map", "0:v:0", "-map", "0:a?", "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", caminho_saida])
     try:
         _run(command, timeout)
     except Exception:

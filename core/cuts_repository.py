@@ -46,6 +46,17 @@ def update_cut(cut_id, status=None, output_path=None, error=None, selected=None,
         conn.close()
 
 
+def update_cut_schedule_recommendation(cut_id, recommendation, perfil_id=1):
+    perfil_id = normalize_profile_id(perfil_id)
+    init_db()
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE cortes_gerados SET horario_recomendado_json=?, atualizado_em=CURRENT_TIMESTAMP WHERE id=? AND perfil_id=?", (json.dumps(recommendation, ensure_ascii=False), cut_id, perfil_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def update_cut_title(cut_id, title, perfil_id=1):
     perfil_id = normalize_profile_id(perfil_id)
     init_db()
@@ -78,6 +89,10 @@ def list_cuts(job_id=None, video_id=None, perfil_id=1):
                 cut["montagem_intervalos"] = json.loads(cut.get("montagem_json") or "[]")
             except (TypeError, json.JSONDecodeError):
                 cut["montagem_intervalos"] = []
+            try:
+                cut["horario_recomendado"] = json.loads(cut.get("horario_recomendado_json") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                cut["horario_recomendado"] = {}
             if not cut.get("nome_rodada") or cut["nome_rodada"] == "rodada-01" or "-curadoria-" in cut["nome_rodada"]:
                 cut["nome_rodada"] = f"{cut.get('video_titulo') or cut.get('video_id') or 'Vídeo'} · ciclo {str(cut.get('job_id') or cut.get('id'))[:8]}"
         return cuts

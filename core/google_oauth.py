@@ -62,8 +62,8 @@ def _client_config():
     }
 
 
-def criar_fluxo_oauth():
-    config = get_oauth_config()
+def criar_fluxo_oauth(include_publish=False):
+    config = get_oauth_config(include_publish=include_publish)
     return Flow.from_client_config(
         _client_config(),
         scopes=config["scopes"],
@@ -71,8 +71,8 @@ def criar_fluxo_oauth():
     )
 
 
-def criar_url_autorizacao():
-    flow = criar_fluxo_oauth()
+def criar_url_autorizacao(include_publish=False):
+    flow = criar_fluxo_oauth(include_publish=include_publish)
     state = secrets.token_urlsafe(32)
     url, _ = flow.authorization_url(
         access_type="offline",
@@ -83,8 +83,8 @@ def criar_url_autorizacao():
     return state, url, flow.code_verifier
 
 
-def concluir_autorizacao(state, authorization_response, code_verifier=None):
-    flow = criar_fluxo_oauth()
+def concluir_autorizacao(state, authorization_response, code_verifier=None, include_publish=False):
+    flow = criar_fluxo_oauth(include_publish=include_publish)
     flow.state = state
     flow.code_verifier = code_verifier
     flow.fetch_token(authorization_response=authorization_response)

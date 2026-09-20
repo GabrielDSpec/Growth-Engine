@@ -127,3 +127,55 @@ Após a primeira rodada da Autópsia:
 - Regra de produto: a página Oportunidades não usa o Radar. Ela é alimentada exclusivamente pela Autópsia dos Top 15, transcrições, observações, hipóteses, views e likes do canal.
 - O Radar local/nicho é um módulo separado para descoberta externa; seus resultados não entram automaticamente como sugestões editoriais.
 - O botão de Oportunidades deve gerar pautas com base no conteúdo que funcionou no canal e salvar score, contexto e briefing.
+
+## Pipeline de cortes e publicação
+
+O fluxo operacional da Central é:
+
+1. Selecionar um vídeo longo por perfil e iniciar a sugestão de cortes.
+2. Transcrever localmente, usando o cache persistente quando o arquivo e o backend forem compatíveis.
+3. Enviar à Qwen o título original, a transcrição e o contexto editorial. A IA só pode corrigir nomes, entidades ou ortografia quando a própria transcrição fornece evidência.
+4. Validar limites em fronteiras semânticas. O sistema rejeita cortes no meio de palavra, frase ou contexto e pode ampliar segmentos Whisper até o encerramento natural.
+5. Persistir candidatos por perfil, vídeo, job e ciclo. Candidatos abaixo do score recomendado continuam disponíveis para avaliação humana.
+6. Renderizar a prévia em MP4 vertical 9:16. Montagens não contínuas seguem a ordem gancho, contexto e retorno ao destaque; cortes contínuos usam o intervalo original.
+7. Revisar no modal da Central, com player, título, score, evidências e ações `Editar`, `Renderizar` e `Excluir`. A seleção para publicação é explícita.
+8. Agendar individualmente, por ciclo ou em lote. Sem data e hora informadas, o sistema calcula slots futuros usando recomendação semântica da Qwen, histórico do canal e horários de pico, sem repetir o mesmo instante.
+9. Publicar pelo YouTube Data API com título, descrição, tags, privacidade privada e `publishAt`. O MP4 precisa existir e o perfil Google precisa ter o escopo `youtube.upload`.
+
+### Contratos HTTP principais
+
+- `POST /api/cuts/suggest`: cria job de geração para um `video_id`.
+- `GET /api/jobs/{job_id}`: consulta progresso, rodada, diagnóstico e estado terminal.
+- `POST /api/jobs/{job_id}/cancel`: solicita cancelamento cooperativo.
+- `POST /api/cuts/select`: seleciona cortes por IDs, sempre no perfil atual.
+- `POST /api/cuts/render`: renderiza os cortes selecionados em 9:16.
+- `POST /api/cuts/schedule`: agenda cortes selecionados, por ciclo ou individualmente.
+- `GET /api/cuts/file/{cut_id}`: entrega MP4 com suporte a `Range` para reprodução e avanço.
+
+### Cancelamento e locks
+
+Transcrição e geração de cortes do mesmo vídeo compartilham a chave `video:<perfil_id>:<video_id>` no `TaskRunner`, que possui um worker pesado por vez. Ao cancelar, a API marca o job como `cancelling` e sinaliza o evento; o worker encerra de forma cooperativa e só então persiste `cancelled` e libera a chave. Enquanto o lock existir, uma nova geração é recusada, evitando duas operações pesadas no mesmo vídeo ou a reutilização prematura do lock.
+
+`iniciar_servidor.py` verifica jobs `queued`/`running` no SQLite antes de abrir a Central. Em terminal não interativo, ele não reinicia automaticamente para não interromper tarefas; em terminal interativo, a confirmação literal `CONTINUAR` é exigida.
+
+### Publicação do YouTube
+
+O OAuth de leitura não é suficiente para publicar. É necessário desconectar/reautorizar o perfil com `https://www.googleapis.com/auth/youtube.upload`. Sem esse escopo, a Central retorna uma mensagem de reautorização em vez de tentar um upload parcial.
+
+### Execução e validação local
+
+```powershell
+python iniciar_servidor.py
+python -m py_compile core/web_server.py core/task_runner.py
+node --check frontend/app.js
+python -m unittest discover -s tests -p "test_*.py"
+```
+
+Se o servidor não iniciar e informar tarefas ativas, aguarde o cancelamento concluir. Para uma reinicialização deliberada em terminal interativo, confirme com `CONTINUAR`; nunca remova manualmente a chave do `TaskRunner` enquanto a thread antiga ainda estiver executando.
+
+## Estado conhecido em 2026-09-20
+
+- Curadoria visual, edição, exclusão, seleção em lote, renderização vertical e montagem composta estão implementadas.
+- Cancelamento agora possui estado intermediário `cancelling` para evitar a corrida entre a resposta HTTP e a liberação do lock.
+- A publicação real está implementada no código, mas depende de reautorização Google com `youtube.upload` no perfil conectado.
+- A validação automatizada disponível no ambiente passou com 40 testes; a execução completa com Qwen, FFmpeg e upload externo ainda depende dos serviços locais e credenciais.

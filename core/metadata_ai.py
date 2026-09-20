@@ -30,6 +30,7 @@ Analise internamente se o corte é uma Vaca Roxa. Se for, gere o JSON puro abaix
   "indice_remarkabilidade": "alta/media",
   "pilar": "NOME_DO_PILAR",
   "titulo": "...",
+    "descricao": "Descrição curta e fiel ao conteúdo, com contexto suficiente para o YouTube.",
   "angulo_diferente": "ESCREVA AQUI O MOTIVO REAL DESTE CORTE SER REMARKÁVEL",
   "tags": ["tag1", "tag2", "tag3"]
 }}
@@ -56,3 +57,42 @@ def gerar_metadados_blindados(contexto_corte: str) -> dict:
     except Exception as e:
         print(f"⚠️ Erro ao gerar metadata Vaca Roxa: {e}")
         return {}
+
+
+PROMPT_HORARIO_CORTE = """
+Analise este corte de YouTube Shorts e indique quando o público teria maior propensão a assistir organicamente.
+Use apenas o tema, a urgência e o comportamento esperado do público descritos no contexto. Não invente dados de analytics.
+Responda somente JSON válido:
+{{
+  "periodo": "manha|almoco|tarde|noite",
+  "dias_preferidos": [0, 1, 2, 3, 4, 5, 6],
+  "confianca": 0,
+  "justificativa": "..."
+}}
+Os dias usam 0=segunda-feira e 6=domingo. Escolha no máximo três dias e uma confiança de 0 a 1.
+Contexto:
+__CONTEXTO_CORTE__
+"""
+
+
+def recomendar_horario_corte(contexto_corte: str) -> dict:
+    payload = {
+        "model": "qwen2.5:14b",
+        "prompt": PROMPT_HORARIO_CORTE.replace("__CONTEXTO_CORTE__", contexto_corte),
+        "stream": False,
+        "format": "json",
+    }
+    try:
+        req = urllib.request.Request(
+            "http://localhost:11434/api/generate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            result = json.loads(data.get("response", "{}"))
+            periodo = result.get("periodo") if result.get("periodo") in {"manha", "almoco", "tarde", "noite"} else "noite"
+            dias = [int(dia) for dia in result.get("dias_preferidos", []) if str(dia).isdigit() and 0 <= int(dia) <= 6][:3]
+            return {"periodo": periodo, "dias_preferidos": dias, "confianca": max(0, min(1, float(result.get("confianca", 0)))), "justificativa": str(result.get("justificativa", ""))[:500]}
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return {"periodo": "noite", "dias_preferidos": [], "confianca": 0, "justificativa": "Sem recomendação semântica disponível; usando os sinais do canal."}

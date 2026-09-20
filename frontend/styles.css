@@ -87,6 +87,9 @@ h3 { font-size: 14px; letter-spacing: -.025em; }
 .button.lime { border-color: var(--lime); background: var(--lime); color: var(--ink); }
 .button.danger { border-color: #a51f2d; background: #a51f2d; color: #ffffff; }
 .button.danger:hover { border-color: #7f1723; background: #7f1723; color: #ffffff; }
+.button.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+.schedule-modal-actions .button.primary { border-color: var(--lime); background: var(--lime); color: #151112; }
+.schedule-modal-actions .button.primary:hover { border-color: var(--lime-dark); background: var(--lime-dark); color: #ffffff; }
 .button:hover { transform: translateY(-1px); box-shadow: 0 5px 13px rgba(23, 33, 29, .12); }
 .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 28px; }
 .metric-card { padding: 18px 19px; background: var(--card); border: 1px solid var(--line); min-height: 119px; position: relative; overflow: hidden; }
@@ -310,6 +313,24 @@ h3 { font-size: 14px; letter-spacing: -.025em; }
 .cut-modal-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 12px; }
 .cut-modal-header h2 { margin: 0; font-size: 18px; }
 .cut-modal .cut-card { max-width: 520px; margin: 0 auto; }
+.schedule-modal { width: min(560px, 96vw); }
+.schedule-modal-lead { color: var(--muted); margin: -4px 0 18px; }
+.schedule-recommendation { display: flex; gap: 12px; align-items: flex-start; padding: 14px; margin-bottom: 18px; background: rgba(255, 45, 95, .08); border: 1px solid rgba(255, 45, 95, .24); border-radius: 8px; }
+.schedule-recommendation-icon { color: var(--accent); }
+.schedule-recommendation strong, .schedule-recommendation p { margin: 0; }
+.schedule-recommendation p { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.schedule-mode { display: grid; gap: 8px; }
+.schedule-mode-option { display: flex; gap: 12px; align-items: flex-start; padding: 13px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.schedule-mode-option.is-active { border-color: var(--accent); background: rgba(255, 45, 95, .06); }
+.schedule-mode-option input { margin-top: 3px; accent-color: var(--accent); }
+.schedule-mode-option span { display: grid; gap: 3px; }
+.schedule-mode-option small { color: var(--muted); }
+.schedule-manual-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+.schedule-manual-fields[hidden] { display: none; }
+.schedule-manual-fields label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.schedule-manual-fields input { width: 100%; box-sizing: border-box; padding: 10px 11px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+.schedule-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+@media (max-width: 560px) { .schedule-manual-fields { grid-template-columns: 1fr; } .schedule-modal-actions { flex-direction: column-reverse; } .schedule-modal-actions button { width: 100%; } }
 @media (max-width: 640px) { .media-intake-row { align-items: stretch; flex-direction: column; } .cut-card { grid-template-columns: minmax(0, 1fr); } .cut-card-actions { grid-column: 1; grid-row: auto; } }
 .briefing-panel { position: fixed; top: 76px; right: 24px; z-index: 35; width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 100px); overflow: auto; padding: 22px; background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }
 .briefing-panel h2 { margin: 18px 0 8px; }

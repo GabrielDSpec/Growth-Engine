@@ -29,4 +29,6 @@ As sessões de geração de cortes são agrupadas por vídeo original e ciclo de
 
 A curadoria exige fronteiras de frases completas. A Qwen pode sinalizar uma oportunidade de montagem `gancho_contexto_retorno`, que o renderer persiste e monta em FFmpeg na ordem gancho, contexto e retorno ao destaque.
 
-Após a revisão, o usuário seleciona os cortes pelos checkboxes. O botão `Agendar selecionados` aparece no painel geral; cada ciclo também possui `Selecionar todos` e `Agendar ciclo`. O agendamento em massa exige que todos os cortes estejam renderizados e usa uma única data e horário.
+Após a revisão, o usuário seleciona os cortes pelos checkboxes. O botão `Agendar selecionados` aparece no painel geral; cada ciclo também possui `Selecionar todos` e `Agendar ciclo`. O agendamento em massa exige que todos os cortes estejam renderizados. A data e a hora podem ser escolhidas no modal; quando omitidas, slots futuros distintos são recomendados automaticamente por corte.
+
+Jobs pesados compartilham um lock por perfil e vídeo. O cancelamento passa por `cancelling` até a thread liberar o lock; não se deve iniciar uma nova geração nem remover o lock manualmente durante esse intervalo.

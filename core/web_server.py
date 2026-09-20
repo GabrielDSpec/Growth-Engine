@@ -17,7 +17,7 @@ from core.database import get_connection, init_db, salvar_perfil_google
 from core.cutter import gerar_cortes_com_retry, garimpar_vacas_roxas, calcular_score_observavel, refinar_titulos_com_ia
 from core.cutter import normalizar_titulo_corte, refinar_titulo_corte
 from core.config import MAX_UPLOAD_BYTES, PASTA_LONGOS, PASTA_SHORTS, UPLOAD_CHUNK_BYTES, obter_pastas_midia
-from core.cuts_repository import create_cut, update_cut, list_cuts
+from core.cuts_repository import create_cut, update_cut, update_cut_schedule_recommendation, list_cuts
 from core.media_tools import MediaToolError, validar_ferramentas, renderizar_corte, localizar_ferramentas
 from core.sync_channel import sincronizar_canal_youtube
 from core.content_intelligence import analisar_videos_longos, obter_status_analises
@@ -34,6 +34,8 @@ from core.profiles_repository import create_profile, delete_profile
 from core.utils import registrar_log
 from core.utils import calcular_hash_arquivo
 from core.google_oauth import criar_url_autorizacao, concluir_autorizacao, serializar_scopes, cifrar_token
+from core.publisher import planejar_melhores_slots, publicar_e_agendar_corte
+from core.metadata_ai import recomendar_horario_corte
 from googleapiclient.discovery import build
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -196,7 +198,7 @@ def _process_local_media_job(job_id, path, perfil_id, duracao_minima=30, duracao
                 output_path = os.path.join(media_dirs["shorts"], output_name)
                 try:
                     update_cut(cut_id, status="renderizando", perfil_id=perfil_id)
-                    renderizar_corte(path, output_path, candidate["inicio"], candidate["fim"], intervalos=candidate.get("montagem_intervalos"))
+                    renderizar_corte(path, output_path, candidate["inicio"], candidate["fim"], intervalos=candidate.get("montagem_intervalos"), vertical=True)
                     update_cut(cut_id, status="concluido", output_path=output_path, perfil_id=perfil_id)
                     candidate_status = "concluido"
                 except Exception as error:
@@ -224,7 +226,7 @@ def _process_local_media_job(job_id, path, perfil_id, duracao_minima=30, duracao
             output = os.path.join(media_dirs["shorts"], f"{job_id}_{cut_id}.mp4")
             try:
                 update_cut(cut_id, status="renderizando", perfil_id=perfil_id)
-                renderizar_corte(path, output, suggestion["inicio"], suggestion["fim"], intervalos=suggestion.get("montagem_intervalos"))
+                renderizar_corte(path, output, suggestion["inicio"], suggestion["fim"], intervalos=suggestion.get("montagem_intervalos"), vertical=True)
                 update_cut(cut_id, status="concluido", output_path=output, perfil_id=perfil_id)
                 results.append({**suggestion, "cut_id": cut_id, "status": "concluido", "output_path": output})
             except Exception as error:
@@ -657,7 +659,16 @@ def _run_cut_job(job_id, video_id, perfil_id, duracao_minima=30, duracao_maxima=
                 output_path = os.path.join(obter_pastas_midia(perfil_id)["shorts"], output_name)
                 try:
                     update_cut(cut_id, status="renderizando", perfil_id=perfil_id)
-                    renderizar_corte(source_path, output_path, candidate["inicio"], candidate["fim"], intervalos=candidate.get("montagem_intervalos"))
+                    renderizar_corte(source_path, output_path, candidate["inicio"], candidate["fim"], intervalos=candidate.get("montagem_intervalos"), vertical=True)
+                    recommendation_context = "\n".join(filter(None, [
+                        f"Título original: {video_title}", f"Título do corte: {candidate.get('titulo', '')}",
+                        f"Gancho: {candidate.get('gancho', '')}", f"Promessa: {candidate.get('promessa', '')}",
+                        f"Virada: {candidate.get('virada', '')}", f"Conclusão: {candidate.get('conclusao', '')}",
+                    ]))
+                    try:
+                        update_cut_schedule_recommendation(cut_id, recomendar_horario_corte(recommendation_context), perfil_id=perfil_id)
+                    except Exception:
+                        update_cut_schedule_recommendation(cut_id, {"periodo": "noite", "dias_preferidos": [], "confianca": 0, "justificativa": "Recomendação indisponível; usando o histórico do canal."}, perfil_id=perfil_id)
                     update_cut(cut_id, status="concluido", output_path=output_path, perfil_id=perfil_id)
                     candidate_status = "concluido"
                 except Exception as error:
@@ -679,7 +690,16 @@ def _run_cut_job(job_id, video_id, perfil_id, duracao_minima=30, duracao_maxima=
             output_path = os.path.join(obter_pastas_midia(perfil_id)["shorts"], output_name)
             try:
                 update_cut(cut_id, status="renderizando", perfil_id=perfil_id)
-                renderizar_corte(source_path, output_path, suggestion["inicio"], suggestion["fim"], intervalos=suggestion.get("montagem_intervalos"))
+                renderizar_corte(source_path, output_path, suggestion["inicio"], suggestion["fim"], intervalos=suggestion.get("montagem_intervalos"), vertical=True)
+                recommendation_context = "\n".join(filter(None, [
+                    f"Título original: {video_title}", f"Título do corte: {suggestion.get('titulo', '')}",
+                    f"Gancho: {suggestion.get('gancho', '')}", f"Promessa: {suggestion.get('promessa', '')}",
+                    f"Virada: {suggestion.get('virada', '')}", f"Conclusão: {suggestion.get('conclusao', '')}",
+                ]))
+                try:
+                    update_cut_schedule_recommendation(cut_id, recomendar_horario_corte(recommendation_context), perfil_id=perfil_id)
+                except Exception:
+                    update_cut_schedule_recommendation(cut_id, {"periodo": "noite", "dias_preferidos": [], "confianca": 0, "justificativa": "Recomendação indisponível; usando o histórico do canal."}, perfil_id=perfil_id)
                 update_cut(cut_id, status="concluido", output_path=output_path, perfil_id=perfil_id)
                 persisted.append({**suggestion, "cut_id": cut_id, "output_path": output_path, "status": "concluido"})
             except Exception as error:
@@ -713,7 +733,7 @@ def _run_selected_cuts_job(job_id, cut_ids, perfil_id):
             output_path = os.path.join(output_dir, output_name)
             try:
                 update_cut(cut["id"], status="renderizando", perfil_id=perfil_id)
-                renderizar_corte(cut["arquivo_origem"], output_path, cut["inicio_segundos"], cut["fim_segundos"], intervalos=cut.get("montagem_intervalos"))
+                renderizar_corte(cut["arquivo_origem"], output_path, cut["inicio_segundos"], cut["fim_segundos"], intervalos=cut.get("montagem_intervalos"), vertical=True)
                 update_cut(cut["id"], status="concluido", output_path=output_path, perfil_id=perfil_id)
                 results.append({**cut, "status": "concluido", "output_path": output_path})
             except Exception as error:
@@ -726,6 +746,46 @@ def _run_selected_cuts_job(job_id, cut_ids, perfil_id):
         _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="cancelled", message=str(error))
     except Exception as error:
         _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="failed", progress=0, message=str(error), error=str(error))
+
+
+def _run_publish_job(job_id, cut_ids, perfil_id, requested_slots=None):
+    try:
+        cuts = [cut for cut in list_cuts(perfil_id=perfil_id) if cut["id"] in cut_ids]
+        slots = requested_slots or planejar_melhores_slots(len(cuts), perfil_id=perfil_id, cuts=cuts)
+        if len(slots) != len(cuts):
+            raise RuntimeError("Não foi possível encontrar slots futuros para todos os cortes.")
+        results = []
+        for index, cut in enumerate(cuts):
+            _raise_if_cancelled(job_id)
+            slot = slots[index]
+            _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="running", progress=round(index / len(cuts) * 100), message=f"Enviando corte {index + 1}/{len(cuts)} para o YouTube")
+            published = publicar_e_agendar_corte(cut, slot["date"], slot["time"], perfil_id=perfil_id)
+            conn = get_connection()
+            try:
+                conn.execute("""
+                    INSERT INTO videos_historico
+                    (video_id, titulo, descricao, tipo, status, data_publicacao, slot_hora, arquivo_origem, perfil_id, atualizado_em)
+                    VALUES (?, ?, ?, 'short', 'programado', ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(video_id) DO UPDATE SET
+                        titulo=excluded.titulo, descricao=excluded.descricao, status='programado',
+                        data_publicacao=excluded.data_publicacao, slot_hora=excluded.slot_hora,
+                        arquivo_origem=excluded.arquivo_origem, perfil_id=excluded.perfil_id,
+                        atualizado_em=CURRENT_TIMESTAMP
+                """, (published["youtube_id"], published["titulo"], published["descricao"], published["date"], published["time"], cut["caminho_saida"], perfil_id))
+                conn.commit()
+            finally:
+                conn.close()
+            results.append({"cut_id": cut["id"], **published})
+        result = {"scheduled": results}
+        message = f"{len(results)} corte(s) enviado(s) e agendado(s) no YouTube"
+        _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="completed", progress=100, message=message, suggestions=results)
+        update_job(job_id, status="completed", progress=100, message=message, result=json.dumps(result, ensure_ascii=False), perfil_id=perfil_id)
+    except JobCancelled as error:
+        _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="cancelled", message=str(error))
+        update_job(job_id, status="cancelled", message=str(error), perfil_id=perfil_id)
+    except Exception as error:
+        _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="failed", progress=0, message=str(error), error=str(error))
+        update_job(job_id, status="failed", progress=0, message=str(error), error=str(error), perfil_id=perfil_id)
 
 
 def _run_sync_job(channel_url, perfil_id):
@@ -910,7 +970,7 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                 perfil_param = parse_qs(parsed.query).get("perfil_id", [None])[0]
                 perfil_id = normalize_profile_id(perfil_param) if perfil_param else None
                 perfil_nome = parse_qs(parsed.query).get("nome", [""])[0].strip()
-                state, url, code_verifier = criar_url_autorizacao()
+                state, url, code_verifier = criar_url_autorizacao(include_publish=True)
                 OAUTH_STATES[state] = {
                     "created": __import__("time").time(),
                     "code_verifier": code_verifier,
@@ -935,6 +995,7 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                     state,
                     authorization_response,
                     OAUTH_STATES[state].get("code_verifier"),
+                    include_publish=True,
                 )
                 youtube = build("youtube", "v3", credentials=credentials)
                 account_email = ""
@@ -1213,15 +1274,15 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
             if not job:
                 self._send_json({"error": "Tarefa não encontrada"}, status=404)
                 return
-            if job.get("status") in {"completed", "failed", "cancelled", "interrupted", "rejected", "needs_review"}:
+            if job.get("status") in {"completed", "failed", "cancelled", "interrupted", "rejected", "needs_review", "cancelling"}:
                 self._send_json({"error": "Esta tarefa já terminou.", "status": job.get("status")}, status=409)
                 return
             _cancel_event(job_id).set()
             store = TRANSCRIPTION_JOBS if job_id in TRANSCRIPTION_JOBS else CUT_JOBS
             if job_id in store:
-                store[job_id].update({"status": "cancelled", "message": "Cancelamento solicitado pelo usuário."})
-            update_job(job_id, status="cancelled", message="Cancelamento solicitado pelo usuário.", perfil_id=self.request_profile_id)
-            self._send_json({"job_id": job_id, "status": "cancelled", "message": "Cancelamento solicitado pelo usuário."})
+                store[job_id].update({"status": "cancelling", "message": "Cancelamento em andamento; aguardando a tarefa liberar o vídeo."})
+            update_job(job_id, status="cancelling", message="Cancelamento em andamento; aguardando a tarefa liberar o vídeo.", perfil_id=self.request_profile_id)
+            self._send_json({"job_id": job_id, "status": "cancelling", "message": "Cancelamento em andamento; aguarde a liberação do vídeo."}, status=202)
             return
         if parsed.path == "/api/profiles/remove":
             try:
@@ -1433,29 +1494,19 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                 cut_id = int(body.get("cut_id"))
                 date = str(body.get("date") or "").strip()
                 slot = str(body.get("time") or "").strip()
-                if not date or not slot:
-                    self._send_json({"error": "Data e horário são obrigatórios."}, status=400)
-                    return
                 cut = next((item for item in list_cuts(perfil_id=self.request_profile_id) if item["id"] == cut_id), None)
                 if not cut or cut.get("status") != "concluido" or not cut.get("caminho_saida"):
                     self._send_json({"error": "O corte precisa estar renderizado antes do agendamento."}, status=400)
                     return
-                init_db()
-                conn = get_connection()
-                try:
-                    conn.execute("""
-                        INSERT INTO videos_historico
-                        (video_id, titulo, tipo, status, data_publicacao, slot_hora, arquivo_origem, perfil_id, atualizado_em)
-                        VALUES (?, ?, 'short', 'programado', ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                        ON CONFLICT(video_id) DO UPDATE SET
-                            titulo=excluded.titulo, status='programado', data_publicacao=excluded.data_publicacao,
-                            slot_hora=excluded.slot_hora, arquivo_origem=excluded.arquivo_origem,
-                            perfil_id=excluded.perfil_id, atualizado_em=CURRENT_TIMESTAMP
-                    """, (f"cut-{cut_id}", cut.get("titulo") or f"Corte {cut_id}", date, slot, cut["caminho_saida"], self.request_profile_id))
-                    conn.commit()
-                finally:
-                    conn.close()
-                self._send_json({"scheduled": cut_id, "date": date, "time": slot})
+                requested_slots = [{"date": date, "time": slot}] if date and slot else None
+                job_id = uuid.uuid4().hex
+                CUT_JOBS[job_id] = {"status": "queued", "progress": 0, "message": "Publicação na fila"}
+                _cancel_event(job_id)
+                create_job(job_id, "cut_publish", cut["video_id"], perfil_id=self.request_profile_id)
+                if not TASK_RUNNER.submit("cut_publish", _run_publish_job, job_id, [cut_id], self.request_profile_id, requested_slots, key=f"cut-publish:{self.request_profile_id}:{cut_id}"):
+                    self._send_json({"error": "Este corte já possui uma publicação em execução.", "job_id": job_id}, status=409)
+                    return
+                self._send_json({"job_id": job_id, "status": "queued"}, status=202)
             except (ValueError, TypeError, json.JSONDecodeError) as error:
                 self._send_json({"error": f"Agendamento inválido: {error}"}, status=400)
             return
@@ -1466,31 +1517,23 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                 cut_ids = sorted({int(cut_id) for cut_id in body.get("cut_ids", [])})
                 date = str(body.get("date") or "").strip()
                 slot = str(body.get("time") or "").strip()
-                if not cut_ids or not date or not slot:
-                    self._send_json({"error": "Cortes, data e horário são obrigatórios."}, status=400)
+                if not cut_ids:
+                    self._send_json({"error": "Selecione ao menos um corte."}, status=400)
                     return
                 cuts = [cut for cut in list_cuts(perfil_id=self.request_profile_id) if cut["id"] in cut_ids]
                 unavailable = [cut["id"] for cut in cuts if cut.get("status") != "concluido" or not cut.get("caminho_saida")]
                 if len(cuts) != len(cut_ids) or unavailable:
                     self._send_json({"error": "Todos os cortes precisam estar renderizados antes do agendamento.", "unavailable": unavailable}, status=400)
                     return
-                init_db()
-                conn = get_connection()
-                try:
-                    for cut in cuts:
-                        conn.execute("""
-                            INSERT INTO videos_historico
-                            (video_id, titulo, tipo, status, data_publicacao, slot_hora, arquivo_origem, perfil_id, atualizado_em)
-                            VALUES (?, ?, 'short', 'programado', ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                            ON CONFLICT(video_id) DO UPDATE SET
-                                titulo=excluded.titulo, status='programado', data_publicacao=excluded.data_publicacao,
-                                slot_hora=excluded.slot_hora, arquivo_origem=excluded.arquivo_origem,
-                                perfil_id=excluded.perfil_id, atualizado_em=CURRENT_TIMESTAMP
-                        """, (f"cut-{cut['id']}", cut.get("titulo") or f"Corte {cut['id']}", date, slot, cut["caminho_saida"], self.request_profile_id))
-                    conn.commit()
-                finally:
-                    conn.close()
-                self._send_json({"scheduled": len(cuts), "date": date, "time": slot})
+                requested_slots = ([{"date": date, "time": slot}] * len(cuts)) if date and slot else None
+                job_id = uuid.uuid4().hex
+                CUT_JOBS[job_id] = {"status": "queued", "progress": 0, "message": "Publicação em massa na fila"}
+                _cancel_event(job_id)
+                create_job(job_id, "cut_publish", cuts[0]["video_id"], perfil_id=self.request_profile_id)
+                if not TASK_RUNNER.submit("cut_publish", _run_publish_job, job_id, cut_ids, self.request_profile_id, requested_slots, key=f"bulk-publish:{self.request_profile_id}"):
+                    self._send_json({"error": "Já existe uma publicação em massa em execução.", "job_id": job_id}, status=409)
+                    return
+                self._send_json({"job_id": job_id, "status": "queued"}, status=202)
             except (ValueError, TypeError, json.JSONDecodeError) as error:
                 self._send_json({"error": f"Agendamento em massa inválido: {error}"}, status=400)
             return
@@ -1543,6 +1586,7 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
             ):
                 message = "video_id é obrigatório." if not video_id else "Este vídeo já possui uma tarefa pesada em execução."
                 CUT_JOBS[job_id].update({"status": "rejected", "message": message})
+                update_job(job_id, status="rejected", message=message, perfil_id=self.request_profile_id)
                 self._send_json({"error": message, "job_id": job_id}, status=400 if not video_id else 409)
                 return
             self._send_json({"job_id": job_id, "status": "queued"}, status=202)
