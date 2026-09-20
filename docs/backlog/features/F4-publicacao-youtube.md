@@ -13,6 +13,8 @@ Enviar cortes renderizados para o canal correto, com metadados editoriais e hora
 - Slots automaticos consideram recomendacao da Qwen por corte, historico de views/likes e horarios de pico.
 - Dois cortes nao recebem o mesmo instante no mesmo lote.
 - A selecao explicita continua obrigatoria: candidato renderizado nao e publicado automaticamente.
+- Para cortes originados de vídeos públicos do YouTube, a descrição inclui automaticamente o link `https://www.youtube.com/watch?v=<video_id>` do vídeo original.
+- Uploads locais não recebem link de origem, porque não possuem uma URL pública conhecida.
 
 ## Bloqueio atual
 
@@ -25,6 +27,11 @@ O perfil Google conectado anteriormente possui permissao de leitura, mas nao o e
 - Um upload bem-sucedido retorna o ID do video externo e os metadados usados.
 - O usuario consegue revisar e selecionar antes de agendar.
 - O agendamento automatico gera datas futuras e horarios distintos.
+- O upload preserva uma referência clicável ao vídeo original na descrição quando essa origem é um vídeo YouTube válido.
+
+## Limite da API
+
+A YouTube Data API não possui um campo universal no `videos.insert` para criar uma relação nativa "Short derivado de" na lista de conteúdo. A referência por descrição é controlável e auditável; recursos visuais de remix/relacionamento do próprio YouTube dependem das regras e da interface da plataforma.
 
 ## Proxima validacao
 

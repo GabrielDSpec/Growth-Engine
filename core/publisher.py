@@ -14,6 +14,7 @@ from core.google_oauth import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, decifrar_t
 from core.metadata_ai import gerar_metadados_blindados
 
 PUBLISH_SCOPE = "https://www.googleapis.com/auth/youtube.upload"
+YOUTUBE_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 
 def _youtube_client(perfil_id=1):
@@ -67,10 +68,18 @@ def _metadata_for_cut(cut):
     description = _restore_entities(_dedupe_repeated_text(description), original_title)
     if not _usable_metadata(description):
         description = _restore_entities(_dedupe_repeated_text(" ".join(filter(None, [cut.get("gancho"), cut.get("promessa"), cut.get("conclusao")]))) or title, original_title)
+    original_url = _original_video_url(cut.get("video_id"))
+    if original_url and original_url not in description:
+        description = f"{description}\n\nVídeo original: {original_url}"
     if isinstance(tags, str):
         tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
     tags = [str(tag).strip()[:30] for tag in tags if str(tag).strip()][:30]
     return title, description, tags
+
+
+def _original_video_url(video_id):
+    video_id = str(video_id or "").strip()
+    return f"https://www.youtube.com/watch?v={video_id}" if YOUTUBE_VIDEO_ID_RE.fullmatch(video_id) else ""
 
 
 def _metadata_text(value, fallback=""):

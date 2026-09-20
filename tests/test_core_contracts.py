@@ -8,7 +8,7 @@ from core.cutter import _montar_prompt, calcular_score_corte, calcular_score_obs
 from core.profiles import validar_url_canal
 from core.radar_sources import _rss_source_urls
 from core.task_runner import TaskRunner
-from core.publisher import _dedupe_repeated_text, _restore_entities, planejar_melhores_slots
+from core.publisher import _dedupe_repeated_text, _metadata_for_cut, _original_video_url, _restore_entities, planejar_melhores_slots
 from core.notification_repository import select_notifications
 from core.content_analysis_repository import select_analysis_status
 from core.content_profile_repository import select_profile_videos
@@ -26,6 +26,20 @@ class CoreContractsTests(unittest.TestCase):
     def test_publisher_restores_entity_only_from_original_title(self):
         self.assertEqual(_restore_entities("MISI Piranga 2026", "Miss Piranga 2026"), "Miss Piranga 2026")
         self.assertEqual(_restore_entities("MISI desconhecida", "Evento Piranga"), "MISI desconhecida")
+
+    def test_publisher_links_youtube_source_but_not_local_uuid(self):
+        self.assertEqual(_original_video_url("dQw4w9WgXcQ"), "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        self.assertEqual(_original_video_url("local-video-uuid"), "")
+
+    @patch("core.publisher.gerar_metadados_blindados", return_value={})
+    def test_publisher_adds_original_link_to_description(self, _metadata):
+        _, description, _ = _metadata_for_cut({
+            "video_id": "dQw4w9WgXcQ",
+            "video_titulo": "Evento confirmado",
+            "titulo": "O evento surpreendeu",
+            "gancho": "O evento surpreendeu.",
+        })
+        self.assertIn("Vídeo original: https://www.youtube.com/watch?v=dQw4w9WgXcQ", description)
 
     def test_scheduler_uses_three_slots_before_next_day(self):
         slots = planejar_melhores_slots(4, perfil_id=999999, cuts=[{}, {}, {}, {}])
