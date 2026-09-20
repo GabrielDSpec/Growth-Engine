@@ -32,3 +32,5 @@ A curadoria exige fronteiras de frases completas. A Qwen pode sinalizar uma opor
 Após a revisão, o usuário seleciona os cortes pelos checkboxes. O botão `Agendar selecionados` aparece no painel geral; cada ciclo também possui `Selecionar todos` e `Agendar ciclo`. O agendamento em massa exige que todos os cortes estejam renderizados. A data e a hora podem ser escolhidas no modal; quando omitidas, os três slots configurados do melhor dia são ocupados antes de avançar, com recomendação semântica por tema e horários distintos.
 
 Jobs pesados compartilham um lock por perfil e vídeo. O cancelamento passa por `cancelling` até a thread liberar o lock; não se deve iniciar uma nova geração nem remover o lock manualmente durante esse intervalo.
+
+Na Central, a seção se chama `Cortes gerados`. O vídeo original agrupa os ciclos, e cada ciclo aparece como um acordeão `Ciclo N`, recolhido até o usuário clicar para ver seus cortes. A seleção individual é um botão de ícone com estado vazio/check; um corte que já possui MP4 não exibe novamente a ação `Renderizar`.

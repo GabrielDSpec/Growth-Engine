@@ -13,13 +13,15 @@
 - A Central organiza os cortes em menus por vídeo original e, dentro dele, por ciclo de análise identificado pelo job da sessão.
 - O título solicitado à IA é uma manchete de YouTube específica, completa e engajante, baseada literalmente no conteúdo do corte.
 - A prévia do vídeo usa proporção vertical 9:16, com título acima, arquivo fonte abaixo e score numérico colorido sobre o canto superior esquerdo.
-- A revisão abre em modal com fundo escurecido e blur; as ações Editar, Renderizar e Excluir ficam ao lado do player.
+- A revisão abre em modal com fundo escurecido e blur; as ações Editar e Excluir ficam ao lado do player. Renderizar só aparece enquanto o MP4 ainda não existe; depois disso o card oferece Baixar MP4 e Agendar postagem.
 - A interface permite excluir um ciclo inteiro, marcando seus cortes como excluídos e removendo os MP4s gerados.
 - A validação semântica rejeita limites no meio de frases e amplia segmentos Whisper até o encerramento da frase, dentro da duração máxima.
 - O contrato da Qwen sinaliza a oportunidade editorial `gancho_contexto_retorno`, sem inventar falas ou timestamps.
 - A montagem composta é persistida em `montagem_json` e o FFmpeg concatena gancho, contexto e destaque; cortes legados usam o intervalo contínuo.
 - A Qwen recebe o título original do vídeo, confere coerência com a transcrição e pode corrigir ortografia, nomes e entidades somente quando há evidência no contexto.
 - O ciclo oferece `Selecionar todos` e `Agendar ciclo`; a Central também oferece `Agendar selecionados` com uma única data e horário.
+- A hierarquia visual mostra `Cortes gerados` por vídeo e ciclos como `Ciclo 1`, `Ciclo 2` etc.; cada ciclo é um acordeão recolhido por padrão e expande somente os cortes daquele ciclo.
+- A seleção individual usa um ícone alternável: círculo vazio para não selecionado e círculo com check verde para selecionado, com tooltip e estado `aria-pressed`.
 
 **Status:** em implementacao
 **Progresso:** 95%
@@ -63,7 +65,7 @@ Cada rodada deve manter `perfil_id`, `video_id`, `video_titulo`, `job_id`, `nume
 - [x] Candidatos estruturalmente validos abaixo do score recomendado sao preservados.
 - [x] Candidatos de `needs_review` sao persistidos com video original e rodada.
 - [x] API de selecao e job de renderizacao sob aprovacao implementados.
-- [x] Interface exibe player, score, rodada, checkbox, download, exclusao e agendamento.
+- [x] Interface exibe player, score, ciclo, download, exclusao e agendamento.
 - [x] Fallback cria candidatos reais quando a IA retorna estrutura inválida ou vazia.
 - [x] Progresso em tempo real informa rodada, candidatos recebidos e candidatos válidos.
 - [x] Grade expansível e streaming parcial permitem assistir cada candidato antes da aprovação.
@@ -79,3 +81,6 @@ Cada rodada deve manter `perfil_id`, `video_id`, `video_titulo`, `job_id`, `nume
 - [x] Montar fisicamente cortes não contínuos no formato gancho, contexto e retorno ao destaque com FFmpeg.
 - [x] Conferir título original contra transcrição antes de gerar/refinar títulos editoriais.
 - [x] Agendar cortes renderizados em massa por seleção geral ou por ciclo.
+- [x] Ciclos usam acordeão intuitivo: o cabeçalho mostra somente `Ciclo N` e os cortes aparecem ao expandir.
+- [x] Seleção individual usa ícone com estado visual e acessível, sem checkbox textual ocupando o card.
+- [x] Cards já renderizados não exibem a ação redundante `Renderizar`; cards sem MP4 continuam oferecendo a ação.
