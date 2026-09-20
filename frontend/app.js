@@ -1058,8 +1058,14 @@ function renderCutCard(cut, options = {}) {
     preview.appendChild(domText('p', 'cut-error', cut.erro || cut.error || 'A renderização falhou.'));
   }
   const actions = createElement('div', { className: 'cut-card-actions' }, [domButton('Editar', 'pencil', 'secondary', 'edit-cut', { 'data-cut-id': cutId })]);
-  if (canSelect) actions.appendChild(createElement('label', { className: 'cut-select' }, [createElement('input', { type: 'checkbox', checked: selectedCandidateIds.has(cutId) ? 'true' : null, 'data-action': options.toggleAction || 'candidate-toggle', 'data-cut-id': cutId }), ' Selecionar para postagem']));
-  if (canSelect) actions.appendChild(domButton('Renderizar', 'scissors', 'secondary', 'render-cut', { 'data-cut-id': cutId }));
+  if (canSelect) {
+    const selected = selectedCandidateIds.has(cutId);
+    const selectButton = domButton('', selected ? 'circle-check' : 'circle', selected ? 'selected' : 'secondary', 'candidate-toggle-button', { 'data-cut-id': cutId, 'aria-pressed': String(selected), title: selected ? 'Selecionado para postagem' : 'Selecionar para postagem' });
+    selectButton.classList.add('cut-select-toggle');
+    selectButton.setAttribute('aria-label', selected ? 'Remover da seleção para postagem' : 'Selecionar para postagem');
+    actions.appendChild(selectButton);
+  }
+  if (canSelect && !outputAvailable) actions.appendChild(domButton('Renderizar', 'scissors', 'secondary', 'render-cut', { 'data-cut-id': cutId }));
   if (outputAvailable) {
     const download = setSafeLink(createElement('a', { className: 'button secondary' }), `/api/cuts/file?id=${encodeURIComponent(cutId)}&perfil_id=${encodeURIComponent(activeProfileId)}`);
     download.setAttribute('download', `${title.replace(/[^a-z0-9]+/gi, '_')}.mp4`);
@@ -1501,6 +1507,14 @@ document.addEventListener('click', (event) => {
   if (scheduleCycle) scheduleCuts(scheduleCycle.dataset.cutIds.split(',').map(Number), 'cortes do ciclo');
 });
 document.addEventListener('click', (event) => {
+  const selectionButton = event.target.closest('[data-action="candidate-toggle-button"]');
+  if (selectionButton) {
+    const cutId = Number(selectionButton.dataset.cutId);
+    if (selectedCandidateIds.has(cutId)) selectedCandidateIds.delete(cutId);
+    else selectedCandidateIds.add(cutId);
+    renderCuts();
+    return;
+  }
   const editButton = event.target.closest('[data-action="edit-cut"]');
   if (editButton) { const cut = allReviewCuts().find(item => Number(item.cut_id || item.id) === Number(editButton.dataset.cutId)); if (cut) openCutEditor(cut); return; }
   if (event.target.closest('[data-action="close-cut-editor"]')) { closeCutEditor(); return; }
