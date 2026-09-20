@@ -22,6 +22,8 @@
 - O ciclo oferece `Selecionar todos` e `Agendar ciclo`; a Central também oferece `Agendar selecionados` com uma única data e horário.
 - A hierarquia visual mostra `Cortes gerados` por vídeo e ciclos como `Ciclo 1`, `Ciclo 2` etc.; cada ciclo é um acordeão recolhido por padrão e expande somente os cortes daquele ciclo.
 - A seleção individual usa um botão curto e alternável: ícone de círculo + `Postar` quando livre e círculo com check verde + `Selecionado` quando ativo, com tooltip e estado `aria-pressed`; a troca atualiza apenas o botão e mantém o ciclo aberto.
+- Quando existe seleção, a Central exibe uma barra contextual com a quantidade escolhida e as ações `Renderizar selecionados`, `Postar selecionados`, `Agendar selecionados` e `Excluir selecionados`.
+- `Postar selecionados` usa os melhores slots futuros automaticamente; `Agendar selecionados` permite informar data e horário; ambas as ações exigem MP4 renderizado. A exclusão em lote pede uma única confirmação e respeita o perfil atual.
 
 **Status:** em implementacao
 **Progresso:** 95%
@@ -83,4 +85,6 @@ Cada rodada deve manter `perfil_id`, `video_id`, `video_titulo`, `job_id`, `nume
 - [x] Agendar cortes renderizados em massa por seleção geral ou por ciclo.
 - [x] Ciclos usam acordeão intuitivo: o cabeçalho mostra somente `Ciclo N` e os cortes aparecem ao expandir.
 - [x] Seleção individual usa ícone com estado visual e acessível, sem checkbox textual ocupando o card.
+- [x] Ações dos selecionados aparecem na mesma faixa de `Selecionar todos`, `Agendar ciclo` e `Excluir ciclo`.
+- [x] `Selecionar todos` atualiza os botões e a contagem sem reconstruir a tela nem fechar o ciclo aberto.
 - [x] Cards já renderizados não exibem a ação redundante `Renderizar`; cards sem MP4 continuam oferecendo a ação.

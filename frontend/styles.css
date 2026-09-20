@@ -300,6 +300,13 @@ h3 { font-size: 14px; letter-spacing: -.025em; }
 .cut-cycle-summary { padding: 9px 10px; background: var(--paper); font-size: 11px; }
 .cut-cycle-actions { display: flex; justify-content: flex-end; gap: 6px; padding: 0 10px 9px; background: var(--paper); }
 .cut-cycle-actions .button { padding: 5px 8px; font-size: 10px; }
+.selected-cuts-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--card); }
+.selected-cuts-toolbar[hidden] { display: none; }
+.selected-cuts-toolbar .selected-cuts-count { margin-right: auto; color: var(--ink); font-size: 12px; }
+.selected-cuts-toolbar .button { padding: 7px 10px; font-size: 10px; }
+.cut-cycle-actions .selected-cuts-toolbar { padding: 0; border: 0; background: transparent; }
+.cut-cycle-actions .selected-cuts-toolbar .selected-cuts-count { margin-right: 2px; }
+.cut-cycle-actions .selected-cuts-toolbar .button { padding: 5px 8px; font-size: 10px; }
 .cut-cycle-group .suggestion-list { padding: 8px; }
 .cut-card-actions { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
 .cut-card-actions { grid-column: 2; grid-row: 3 / span 2; }

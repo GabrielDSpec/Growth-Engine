@@ -996,10 +996,10 @@ async function scheduleCut(cutId) {
     showToast(error.message);
   }
 }
-async function scheduleCuts(cutIds, label = 'cortes selecionados') {
+async function scheduleCuts(cutIds, label = 'cortes selecionados', automatic = false) {
   const ids = [...new Set(cutIds.map(Number).filter(Boolean))];
   if (!ids.length) return showToast(`Selecione pelo menos um corte para ${label}.`);
-  const schedule = await openScheduleDialog(ids, label);
+  const schedule = automatic ? {} : await openScheduleDialog(ids, label);
   if (!schedule) return;
   try {
     const response = await fetch('/api/cuts/schedule-bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cut_ids: ids, ...schedule }) });
@@ -1012,9 +1012,48 @@ async function scheduleCuts(cutIds, label = 'cortes selecionados') {
     pollCutJob();
   } catch (error) { showToast(error.message); }
 }
+async function deleteSelectedCuts() {
+  const ids = [...selectedCandidateIds].filter(Boolean);
+  if (!ids.length) return showToast('Selecione pelo menos um corte para excluir.');
+  if (!confirm(`Excluir ${ids.length} corte(s) selecionado(s)?`)) return;
+  try {
+    for (const cutId of ids) {
+      const response = await fetch('/api/cuts/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cut_id: cutId }) });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível excluir os cortes selecionados.');
+    }
+    selectedCandidateIds.clear();
+    await reloadSelectedCutData();
+    cutSuggestions = cutSuggestions.filter(cut => !ids.includes(Number(cut.cut_id || cut.id)));
+    renderCuts();
+    showToast(`${ids.length} corte(s) excluído(s).`);
+  } catch (error) { showToast(error.message); }
+}
+function updateSelectedCutsToolbar() {
+  const toolbar = document.querySelector('#selected-cuts-toolbar');
+  if (!toolbar) return;
+  const count = selectedCandidateIds.size;
+  toolbar.hidden = count === 0;
+  const label = toolbar.querySelector('.selected-cuts-count');
+  if (label) label.textContent = `${count} selecionado${count === 1 ? '' : 's'}`;
+}
+function syncSelectionButtons() {
+  document.querySelectorAll('[data-action="candidate-toggle-button"]').forEach(selectionButton => {
+    const selected = selectedCandidateIds.has(Number(selectionButton.dataset.cutId));
+    selectionButton.classList.toggle('selected', selected);
+    selectionButton.classList.toggle('secondary', !selected);
+    selectionButton.setAttribute('aria-pressed', String(selected));
+    selectionButton.setAttribute('aria-label', selected ? 'Remover da seleção para postagem' : 'Selecionar para postagem');
+    selectionButton.title = selected ? 'Remover da seleção para postagem' : 'Selecionar para postagem';
+    clearElement(selectionButton);
+    selectionButton.append(domIcon(selected ? 'circle-check' : 'circle'), selected ? 'Selecionado' : 'Postar');
+  });
+  refreshIcons();
+  updateSelectedCutsToolbar();
+}
 function selectCycleCuts(cuts) {
   cuts.filter(cut => ['candidato', 'concluido', 'selecionado'].includes(cut.status || 'candidato')).forEach(cut => selectedCandidateIds.add(Number(cut.cut_id || cut.id)));
-  renderCuts();
+  syncSelectionButtons();
 }
 async function renderSelectedCuts() {
   const cutIds = [...selectedCandidateIds];
@@ -1408,11 +1447,18 @@ function renderCuts() {
   const candidateHook = cutSuggestions.find(cut => cut.gancho)?.gancho || '';
   const persistedPanel = createElement('section', { className: 'panel cut-review' }, [domPanelHeader('Cortes gerados', candidateTitle ? `Último título sugerido: ${candidateTitle}` : candidateHook ? `Gancho: ${candidateHook}` : 'Estado persistido de cada renderização')]);
   const reviewCuts = allReviewCuts();
-  persistedPanel.appendChild(reviewCuts.length ? renderReviewGroups(reviewCuts, candidateToggleAction) : domText('p', 'empty-state', 'Nenhum corte persistido ainda.'));
-  if (reviewCuts.some(cut => ['candidato', 'concluido', 'selecionado'].includes(cut.status))) {
-    persistedPanel.appendChild(domButton('Renderizar selecionados', 'scissors', 'lime', 'render-selected-cuts'));
-    persistedPanel.appendChild(domButton('Agendar selecionados', 'calendar-plus', 'secondary', 'schedule-selected-cuts'));
-  }
+  const selectedToolbar = createElement('div', { id: 'selected-cuts-toolbar', className: 'selected-cuts-toolbar', hidden: selectedCandidateIds.size === 0 ? 'hidden' : null }, [
+    domText('strong', 'selected-cuts-count', `${selectedCandidateIds.size} selecionado${selectedCandidateIds.size === 1 ? '' : 's'}`),
+    domButton('Renderizar selecionados', 'scissors', 'secondary', 'render-selected-cuts'),
+    domButton('Postar selecionados', 'send', 'lime', 'post-selected-cuts'),
+    domButton('Agendar selecionados', 'calendar-plus', 'secondary', 'schedule-selected-cuts'),
+    domButton('Excluir selecionados', 'trash-2', 'danger', 'delete-selected-cuts'),
+  ]);
+  const reviewGroups = reviewCuts.length ? renderReviewGroups(reviewCuts, candidateToggleAction) : domText('p', 'empty-state', 'Nenhum corte persistido ainda.');
+  const firstCycleActions = reviewGroups.querySelector?.('.cut-cycle-actions');
+  if (firstCycleActions) firstCycleActions.prepend(selectedToolbar);
+  else persistedPanel.appendChild(selectedToolbar);
+  persistedPanel.appendChild(reviewGroups);
   root.appendChild(persistedPanel);
   const reviewJob = [cutJob, transcriptionJob].find(job => job?.status === 'needs_review');
   if (reviewJob) {
@@ -1499,6 +1545,8 @@ document.addEventListener('click', (event) => { const briefingAction = event.tar
 document.addEventListener('click', (event) => { if (event.target.closest('[data-action="upload-local"]')) uploadLocalMedia(); if (event.target.closest('[data-action="force-download"]')) forceDownloadMedia(); });
 document.addEventListener('click', (event) => {
   if (event.target.closest('[data-action="render-selected-cuts"]')) renderSelectedCuts();
+  if (event.target.closest('[data-action="post-selected-cuts"]')) scheduleCuts([...selectedCandidateIds], 'cortes selecionados', true);
+  if (event.target.closest('[data-action="delete-selected-cuts"]')) deleteSelectedCuts();
   const scheduleSelected = event.target.closest('[data-action="schedule-selected-cuts"]');
   if (scheduleSelected) scheduleCuts([...selectedCandidateIds], 'cortes selecionados');
   const selectCycle = event.target.closest('[data-action="select-cycle-cuts"]');
@@ -1521,6 +1569,7 @@ document.addEventListener('click', (event) => {
     clearElement(selectionButton);
     selectionButton.append(domIcon(selected ? 'circle-check' : 'circle'), selected ? 'Selecionado' : 'Postar');
     refreshIcons();
+    updateSelectedCutsToolbar();
     return;
   }
   const editButton = event.target.closest('[data-action="edit-cut"]');

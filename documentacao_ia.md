@@ -138,7 +138,7 @@ O fluxo operacional da Central é:
 4. Validar limites em fronteiras semânticas. O sistema rejeita cortes no meio de palavra, frase ou contexto e pode ampliar segmentos Whisper até o encerramento natural.
 5. Persistir candidatos por perfil, vídeo, job e ciclo. Candidatos abaixo do score recomendado continuam disponíveis para avaliação humana.
 6. Renderizar a prévia em MP4 vertical 9:16. Montagens não contínuas seguem a ordem gancho, contexto e retorno ao destaque; cortes contínuos usam o intervalo original.
-7. Revisar no modal da Central, com player, título, score, evidências e ações adequadas ao estado. `Renderizar` só aparece antes de existir MP4; depois o card oferece `Baixar MP4`, `Agendar postagem` e `Excluir`. A seleção para publicação é explícita e usa um ícone que muda para check quando selecionado.
+7. Revisar no modal da Central, com player, título, score, evidências e ações adequadas ao estado. `Renderizar` só aparece antes de existir MP4; depois o card oferece `Baixar MP4`, `Agendar postagem` e `Excluir`. A seleção para publicação é explícita e usa um ícone que muda para check quando selecionado; as ações em lote ficam na mesma faixa das ações do ciclo e `Selecionar todos` preserva o acordeão aberto.
 8. Agendar individualmente, por ciclo ou em lote. Sem data e hora informadas, o sistema calcula slots futuros usando recomendação semântica da Qwen, histórico do canal e horários de pico, sem repetir o mesmo instante. A cadência ocupa os três melhores horários configurados do mesmo dia antes de avançar para o dia seguinte, permitindo pelo menos três Shorts por dia quando houver cortes suficientes.
 9. Publicar pelo YouTube Data API com título, descrição, tags, privacidade privada e `publishAt`. O MP4 precisa existir e o perfil Google precisa ter o escopo `youtube.upload`. Quando o corte veio de um vídeo público do YouTube, a descrição inclui `Vídeo original: https://www.youtube.com/watch?v=...`; uploads locais não recebem URL inventada.
 
@@ -149,7 +149,9 @@ O fluxo operacional da Central é:
 - `POST /api/jobs/{job_id}/cancel`: solicita cancelamento cooperativo.
 - `POST /api/cuts/select`: seleciona cortes por IDs, sempre no perfil atual.
 - `POST /api/cuts/render-selected`: renderiza os cortes selecionados em 9:16; depois de renderizados, a Central não repete a ação `Renderizar` no card.
-- `POST /api/cuts/schedule`: agenda cortes selecionados, por ciclo ou individualmente.
+- `POST /api/cuts/schedule`: agenda um corte com data e horário definidos.
+- `POST /api/cuts/schedule-bulk`: publica e agenda cortes renderizados em lote; sem data e hora, calcula os melhores slots futuros, ocupando os horários configurados do mesmo dia antes de avançar.
+- `POST /api/cuts/delete`: exclui um corte do perfil atual e remove seu MP4 quando aplicável; a Central o utiliza repetidamente para `Excluir selecionados` após uma confirmação única.
 - `GET /api/cuts/file/{cut_id}`: entrega MP4 com suporte a `Range` para reprodução e avanço.
 
 ### Cancelamento e locks
