@@ -168,6 +168,14 @@ Toda implementacao relevante deve atualizar este arquivo com:
 - Teste de contrato adicionado para validar a ordem dos intervalos compostos.
 - A pendência de montagem não contínua foi concluída; permanecem payload bruto da Qwen e motivo individual de rejeição estrutural.
 
+## Continuação de 20/09/2026 - Títulos e agendamento em massa
+
+- O prompt da Qwen passou a receber o título original de cada vídeo e a confrontá-lo com a transcrição antes de gerar ou refinar títulos de cortes.
+- A correção de ortografia, nomes próprios e entidades só é aceita quando sustentada pelo contexto transcrito.
+- A Central passou a exibir `Agendar selecionados` no painel geral e, em cada ciclo, `Selecionar todos` e `Agendar ciclo`.
+- O endpoint `/api/cuts/schedule-bulk` agenda vários MP4s renderizados com uma única data e horário e rejeita cortes ainda não renderizados.
+- Teste de contrato adicionado para garantir que o título original está presente no prompt da IA.
+
 ## Handoff de 19/09/2026 - Renderer de Shorts
 
 - Objetivo: corrigir o corte horizontal, manter o rosto no quadro vertical e evitar cortes abruptos de palavras.

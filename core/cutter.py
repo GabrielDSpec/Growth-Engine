@@ -16,7 +16,7 @@ MAX_CORTES_SOLICITADOS = 15
 MAX_TENTATIVAS_QWEN = 3
 
 
-def _montar_prompt(transcricao_texto, duracao_total_seg, segmentos, tentativa, cortes_atuais, rejeicoes, duracao_minima=10, duracao_maxima=90):
+def _montar_prompt(transcricao_texto, duracao_total_seg, segmentos, tentativa, cortes_atuais, rejeicoes, duracao_minima=10, duracao_maxima=90, titulo_original=""):
     feedback = ""
     if rejeicoes:
         feedback = "\nCorrija estes problemas observados nas rodadas anteriores:\n- " + "\n- ".join(rejeicoes[-12:])
@@ -56,6 +56,11 @@ def _montar_prompt(transcricao_texto, duracao_total_seg, segmentos, tentativa, c
         compartilhabilidade (15%): motivo concreto para comentar ou enviar a alguém;
         evidencia (10%): título, gancho e conclusão sustentados literalmente pelo trecho.
         Não use retenção, CTR ou alcance como se fossem medidos; esses dados só existem após publicação.
+    Título original do vídeo: {titulo_original or "não informado"}
+    Antes de propor cortes, confira o título original contra a transcrição. Identifique erros ortográficos,
+    nomes próprios, entidades ou afirmações do título que não correspondam ao contexto. Corrija somente o que
+    puder ser confirmado pela transcrição e mantenha o sentido factual. Para cada corte, o título editorial deve
+    ser coerente com o vídeo original e não pode contradizer seu tema.
     Analise a transcrição segmentada ({duracao_total_seg:.1f}s):
     {transcricao_texto}
         Retorne EXCLUSIVAMENTE um objeto JSON puro, sem markdown, sem comentários e sem texto antes ou depois.
@@ -318,7 +323,7 @@ def _candidatos_fallback(segmentos, duracao_total_seg, duracao_minima, duracao_m
 
 def gerar_cortes_com_retry(transcricao_texto, duracao_total_seg, segmentos=None,
                            minimo=MIN_CORTES_PADRAO, max_tentativas=MAX_TENTATIVAS_QWEN,
-                           duracao_minima=10, duracao_maxima=90, progress_callback=None):
+                           duracao_minima=10, duracao_maxima=90, progress_callback=None, titulo_original=""):
     aceitos = []
     candidatos_gerados = []
     candidatos_brutos = []
@@ -327,7 +332,7 @@ def gerar_cortes_com_retry(transcricao_texto, duracao_total_seg, segmentos=None,
     for tentativa in range(1, max_tentativas + 1):
         if progress_callback:
             progress_callback(tentativa, max_tentativas, "analisando", {"candidatos": len(candidatos_gerados)})
-        prompt = _montar_prompt(transcricao_texto, duracao_total_seg, segmentos, tentativa, aceitos, rejeicoes, duracao_minima, duracao_maxima)
+        prompt = _montar_prompt(transcricao_texto, duracao_total_seg, segmentos, tentativa, aceitos, rejeicoes, duracao_minima, duracao_maxima, titulo_original)
         rodada = {"tentativa": tentativa, "candidatos": 0, "aceitos": 0, "status": "ok"}
         try:
             resposta = requests.post("http://localhost:11434/api/generate", json={
@@ -373,7 +378,7 @@ def gerar_cortes_com_retry(transcricao_texto, duracao_total_seg, segmentos=None,
     return {"status": "needs_review", "cortes": aceitos, "candidatos": revisao, "diagnostico": diagnostico, "rejeicoes": rejeicoes, "minimo": minimo}
 
 
-def refinar_titulos_com_ia(cortes):
+def refinar_titulos_com_ia(cortes, titulo_original=""):
     """Transforma títulos brutos em manchetes editoriais sem alterar o conteúdo do corte."""
     if not cortes:
         return cortes
@@ -386,7 +391,9 @@ def refinar_titulos_com_ia(cortes):
         "conclusao": corte.get("conclusao", ""),
     } for indice, corte in enumerate(cortes)]
     prompt = f"""Você é editor de títulos para YouTube Shorts. Reescreva os títulos dos cortes abaixo.
-Use somente fatos presentes nos campos fornecidos. Cada título deve ser uma manchete natural em pt-BR,
+O título original do vídeo é: {titulo_original or "não informado"}.
+Use somente fatos presentes nos campos fornecidos e confirme coerência com o título original. Corrija
+ortografia, nomes próprios e entidades do título somente quando a transcrição sustentar a correção. Cada título deve ser uma manchete natural em pt-BR,
 específica, completa e curiosa, com 35 a 55 caracteres. Use verbo ou conflito claro, não copie uma frase
 inteira, não comece por Trecho, Corte ou Parte, não use emojis, #shorts, reticências ou clickbait.
 Retorne somente JSON no formato {{\"titulos\":[{{\"indice\":0,\"titulo\":\"...\"}}]}}.
@@ -410,8 +417,8 @@ Retorne somente JSON no formato {{\"titulos\":[{{\"indice\":0,\"titulo\":\"...\"
     return cortes
 
 
-def garimpar_vacas_roxas(transcricao_texto, duracao_total_seg, segmentos=None):
-    return gerar_cortes_com_retry(transcricao_texto, duracao_total_seg, segmentos)["cortes"]
+def garimpar_vacas_roxas(transcricao_texto, duracao_total_seg, segmentos=None, titulo_original=""):
+    return gerar_cortes_com_retry(transcricao_texto, duracao_total_seg, segmentos, titulo_original=titulo_original)["cortes"]
 
 
 def _garimpar_vacas_roxas_uma_rodada_legacy(transcricao_texto, duracao_total_seg, segmentos=None):

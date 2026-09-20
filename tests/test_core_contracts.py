@@ -4,7 +4,7 @@ from threading import Event
 from unittest.mock import patch
 
 from core.content_profile import VIDEO_THEME_SCHEMA, _classificar_videos, _parse_classification_response, _rotulo_valido
-from core.cutter import calcular_score_corte, calcular_score_observavel, gerar_cortes_com_retry, refinar_titulo_corte, validar_cortes
+from core.cutter import _montar_prompt, calcular_score_corte, calcular_score_observavel, gerar_cortes_com_retry, refinar_titulo_corte, validar_cortes
 from core.profiles import validar_url_canal
 from core.radar_sources import _rss_source_urls
 from core.task_runner import TaskRunner
@@ -82,6 +82,11 @@ class CoreContractsTests(unittest.TestCase):
     def test_generic_cut_title_is_replaced_by_content_title(self):
         title = refinar_titulo_corte("Trecho para revisar 01", "As juradas avaliaram a competição")
         self.assertEqual(title, "As juradas avaliaram a competição")
+
+    def test_cut_prompt_checks_original_video_title_against_transcription(self):
+        prompt = _montar_prompt("[0] 0-20: A frase confirmada.", 20, [], 1, [], [], titulo_original="Evento em Piranga")
+        self.assertIn("Título original do vídeo: Evento em Piranga", prompt)
+        self.assertIn("confira o título original contra a transcrição", prompt)
 
     def test_cutter_retries_three_times_then_requests_review(self):
         class EmptyResponse:

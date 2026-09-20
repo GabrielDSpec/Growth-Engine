@@ -170,7 +170,10 @@ def _process_local_media_job(job_id, path, perfil_id, duracao_minima=30, duracao
         store[job_id].update({"progress": 92, "message": "Qwen analisando segmentos", "stage": "analyzing", "segments_processed": len(segments), "segments_accepted": len(segments), "perfil_id": perfil_id})
         update_job(job_id, status="running", progress=92, message="Qwen analisando segmentos", perfil_id=perfil_id)
         _raise_if_cancelled(job_id)
-        analysis = gerar_cortes_com_retry(text, duration, segments, duracao_minima=duracao_minima, duracao_maxima=duracao_maxima)
+        titulo_original = _local_media_title(path)
+        analysis = gerar_cortes_com_retry(text, duration, segments, duracao_minima=duracao_minima, duracao_maxima=duracao_maxima, titulo_original=titulo_original)
+        refinar_titulos_com_ia(analysis.get("cortes", []), titulo_original=titulo_original)
+        refinar_titulos_com_ia(analysis.get("candidatos", []), titulo_original=titulo_original)
         _raise_if_cancelled(job_id)
         suggestions = analysis["cortes"]
         if analysis["status"] != "completed":
@@ -600,6 +603,12 @@ def _run_cut_job(job_id, video_id, perfil_id, duracao_minima=30, duracao_maxima=
         if not transcription or not transcription["segments"]:
             raise RuntimeError("Este vídeo ainda não possui transcrição segmentada.")
         segments = transcription["segments"]
+        conn = get_connection()
+        try:
+            source_row = conn.execute("SELECT titulo FROM videos_historico WHERE video_id=? AND perfil_id=?", (video_id, perfil_id)).fetchone()
+            titulo_original = source_row["titulo"] if source_row else ""
+        finally:
+            conn.close()
         duration = max(segment["fim"] for segment in segments)
         segmented_text = "\n".join(
             f"[{segment['indice']}] {segment['inicio']:.3f}-{segment['fim']:.3f}: {segment['texto']}"
@@ -615,10 +624,10 @@ def _run_cut_job(job_id, video_id, perfil_id, duracao_minima=30, duracao_maxima=
 
         _update_runtime_job(CUT_JOBS, job_id, perfil_id, progress=30, message="IA analisando conteúdo · preparando contexto")
         _raise_if_cancelled(job_id)
-        analysis = gerar_cortes_com_retry(segmented_text, duration, segments, duracao_minima=duracao_minima, duracao_maxima=duracao_maxima, progress_callback=update_analysis_progress)
+        analysis = gerar_cortes_com_retry(segmented_text, duration, segments, duracao_minima=duracao_minima, duracao_maxima=duracao_maxima, progress_callback=update_analysis_progress, titulo_original=titulo_original)
         _raise_if_cancelled(job_id)
-        refinar_titulos_com_ia(analysis.get("cortes", []))
-        refinar_titulos_com_ia(analysis.get("candidatos", []))
+        refinar_titulos_com_ia(analysis.get("cortes", []), titulo_original=titulo_original)
+        refinar_titulos_com_ia(analysis.get("candidatos", []), titulo_original=titulo_original)
         suggestions = analysis["cortes"]
         conn = get_connection()
         try:
@@ -1449,6 +1458,41 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                 self._send_json({"scheduled": cut_id, "date": date, "time": slot})
             except (ValueError, TypeError, json.JSONDecodeError) as error:
                 self._send_json({"error": f"Agendamento inválido: {error}"}, status=400)
+            return
+        if parsed.path == "/api/cuts/schedule-bulk":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(length) or b"{}")
+                cut_ids = sorted({int(cut_id) for cut_id in body.get("cut_ids", [])})
+                date = str(body.get("date") or "").strip()
+                slot = str(body.get("time") or "").strip()
+                if not cut_ids or not date or not slot:
+                    self._send_json({"error": "Cortes, data e horário são obrigatórios."}, status=400)
+                    return
+                cuts = [cut for cut in list_cuts(perfil_id=self.request_profile_id) if cut["id"] in cut_ids]
+                unavailable = [cut["id"] for cut in cuts if cut.get("status") != "concluido" or not cut.get("caminho_saida")]
+                if len(cuts) != len(cut_ids) or unavailable:
+                    self._send_json({"error": "Todos os cortes precisam estar renderizados antes do agendamento.", "unavailable": unavailable}, status=400)
+                    return
+                init_db()
+                conn = get_connection()
+                try:
+                    for cut in cuts:
+                        conn.execute("""
+                            INSERT INTO videos_historico
+                            (video_id, titulo, tipo, status, data_publicacao, slot_hora, arquivo_origem, perfil_id, atualizado_em)
+                            VALUES (?, ?, 'short', 'programado', ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                            ON CONFLICT(video_id) DO UPDATE SET
+                                titulo=excluded.titulo, status='programado', data_publicacao=excluded.data_publicacao,
+                                slot_hora=excluded.slot_hora, arquivo_origem=excluded.arquivo_origem,
+                                perfil_id=excluded.perfil_id, atualizado_em=CURRENT_TIMESTAMP
+                        """, (f"cut-{cut['id']}", cut.get("titulo") or f"Corte {cut['id']}", date, slot, cut["caminho_saida"], self.request_profile_id))
+                    conn.commit()
+                finally:
+                    conn.close()
+                self._send_json({"scheduled": len(cuts), "date": date, "time": slot})
+            except (ValueError, TypeError, json.JSONDecodeError) as error:
+                self._send_json({"error": f"Agendamento em massa inválido: {error}"}, status=400)
             return
         if parsed.path == "/api/cuts/render-selected":
             try:

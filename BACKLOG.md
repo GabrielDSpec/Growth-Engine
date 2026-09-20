@@ -155,6 +155,7 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [x] **Curadoria visual de cortes:** revisão em modal com blur, player do MP4 renderizado em 9:16, ações laterais, agrupamento amigável por ciclo/rodada e exclusão de ciclo com limpeza dos arquivos.
 - [x] **Integridade semântica dos cortes:** validação rejeita cortes no meio de frases e expande segmentos Whisper até uma fronteira de encerramento; testes de regressão cobrem ambos os casos.
 - [x] **Montagem de retenção:** cortes podem repetir o destaque no começo e retornar ao contexto até o momento original, com fallback contínuo para cortes antigos ou sem marcação válida.
+- [x] **Título contextual e publicação em massa:** a Qwen confere o título original contra a transcrição para corrigir ortografia e entidades com evidência; a Central oferece seleção total por ciclo, `Agendar selecionados` e `Agendar ciclo`.
 
 ## Definição de pronto do sprint
 

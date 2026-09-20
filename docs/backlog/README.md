@@ -28,3 +28,5 @@ Ao criar ou alterar um item, atualize `index.json` e o documento correspondente 
 As sessões de geração de cortes são agrupadas por vídeo original e ciclo de análise; o ciclo é identificado pelo job persistido da sessão para que execuções repetidas não se misturem.
 
 A curadoria exige fronteiras de frases completas. A Qwen pode sinalizar uma oportunidade de montagem `gancho_contexto_retorno`, que o renderer persiste e monta em FFmpeg na ordem gancho, contexto e retorno ao destaque.
+
+Após a revisão, o usuário seleciona os cortes pelos checkboxes. O botão `Agendar selecionados` aparece no painel geral; cada ciclo também possui `Selecionar todos` e `Agendar ciclo`. O agendamento em massa exige que todos os cortes estejam renderizados e usa uma única data e horário.

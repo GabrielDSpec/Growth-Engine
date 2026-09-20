@@ -922,6 +922,27 @@ async function scheduleCut(cutId) {
     showToast(error.message);
   }
 }
+async function scheduleCuts(cutIds, label = 'cortes selecionados') {
+  const ids = [...new Set(cutIds.map(Number).filter(Boolean))];
+  if (!ids.length) return showToast(`Selecione pelo menos um corte para ${label}.`);
+  const date = window.prompt('Data de publicação (AAAA-MM-DD):', new Date().toISOString().slice(0, 10));
+  if (!date) return;
+  const time = window.prompt('Horário de publicação (HH:MM):', '17:30');
+  if (!time) return;
+  try {
+    const response = await fetch('/api/cuts/schedule-bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cut_ids: ids, date, time }) });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível agendar os cortes.');
+    showToast(`${payload.scheduled} ${label} agendado(s) para ${payload.date} às ${payload.time}.`);
+    await loadScheduled();
+    await reloadSelectedCutData();
+    renderCuts();
+  } catch (error) { showToast(error.message); }
+}
+function selectCycleCuts(cuts) {
+  cuts.filter(cut => ['candidato', 'concluido', 'selecionado'].includes(cut.status || 'candidato')).forEach(cut => selectedCandidateIds.add(Number(cut.cut_id || cut.id)));
+  renderCuts();
+}
 async function renderSelectedCuts() {
   const cutIds = [...selectedCandidateIds];
   if (!cutIds.length) return showToast('Selecione pelo menos um candidato para renderizar.');
@@ -1023,7 +1044,8 @@ function renderReviewGroups(cuts, toggleAction = 'candidate-toggle') {
     [...video.cycles.entries()].forEach(([cycleName, cycleCuts], cycleIndex) => {
       const cycleGroup = createElement('details', { className: 'cut-cycle-group', open: 'true' });
       const roundNumber = Number(cycleCuts[0]?.numero_rodada || 1);
-      const cycleHeader = createElement('div', { className: 'cut-cycle-summary' }, [domText('strong', '', `Ciclo ${cycleIndex + 1} · Rodada ${roundNumber}`), domText('span', '', `${cycleCuts.length} cortes`), domButton('Excluir ciclo', 'trash-2', 'danger', 'delete-cut-cycle', { 'data-video-id': cycleCuts[0]?.video_id || '', 'data-round-name': cycleName })]);
+      const cycleIds = cycleCuts.map(cut => Number(cut.cut_id || cut.id)).filter(Boolean);
+      const cycleHeader = createElement('div', { className: 'cut-cycle-summary' }, [domText('strong', '', `Ciclo ${cycleIndex + 1} · Rodada ${roundNumber}`), domText('span', '', `${cycleCuts.length} cortes`), domButton('Selecionar todos', 'check-check', 'secondary', 'select-cycle-cuts', { 'data-cut-ids': cycleIds.join(',') }), domButton('Agendar ciclo', 'calendar-plus', 'secondary', 'schedule-cycle-cuts', { 'data-cut-ids': cycleIds.join(',') }), domButton('Excluir ciclo', 'trash-2', 'danger', 'delete-cut-cycle', { 'data-video-id': cycleCuts[0]?.video_id || '', 'data-round-name': cycleName })]);
       cycleGroup.appendChild(cycleHeader);
       const list = createElement('div', { className: 'suggestion-list' });
       [...cycleCuts].sort((left, right) => Number(right.score_vaca_roxa || 0) - Number(left.score_vaca_roxa || 0)).forEach((cut, index) => {
@@ -1297,7 +1319,10 @@ function renderCuts() {
   const persistedPanel = createElement('section', { className: 'panel cut-review' }, [domPanelHeader('Cortes gerados', candidateTitle ? `Último título sugerido: ${candidateTitle}` : candidateHook ? `Gancho: ${candidateHook}` : 'Estado persistido de cada renderização')]);
   const reviewCuts = allReviewCuts();
   persistedPanel.appendChild(reviewCuts.length ? renderReviewGroups(reviewCuts, candidateToggleAction) : domText('p', 'empty-state', 'Nenhum corte persistido ainda.'));
-  if (reviewCuts.some(cut => ['candidato', 'concluido', 'selecionado'].includes(cut.status))) persistedPanel.appendChild(domButton('Selecionar para postagem e renderizar', 'scissors', 'lime', 'render-selected-cuts'));
+  if (reviewCuts.some(cut => ['candidato', 'concluido', 'selecionado'].includes(cut.status))) {
+    persistedPanel.appendChild(domButton('Renderizar selecionados', 'scissors', 'lime', 'render-selected-cuts'));
+    persistedPanel.appendChild(domButton('Agendar selecionados', 'calendar-plus', 'secondary', 'schedule-selected-cuts'));
+  }
   root.appendChild(persistedPanel);
   const reviewJob = [cutJob, transcriptionJob].find(job => job?.status === 'needs_review');
   if (reviewJob) {
@@ -1382,7 +1407,15 @@ document.addEventListener('click', (event) => { if (event.target.closest('[data-
 document.addEventListener('click', (event) => { if (event.target.closest('[data-action="close-briefing"]')) document.querySelector('#briefing-panel')?.remove(); });
 document.addEventListener('click', (event) => { const briefingAction = event.target.closest('[data-action="briefing"]'); if (briefingAction) showBriefingPanel(briefingAction.dataset.opportunityId); });
 document.addEventListener('click', (event) => { if (event.target.closest('[data-action="upload-local"]')) uploadLocalMedia(); if (event.target.closest('[data-action="force-download"]')) forceDownloadMedia(); });
-document.addEventListener('click', (event) => { if (event.target.closest('[data-action="render-selected-cuts"]')) renderSelectedCuts(); });
+document.addEventListener('click', (event) => {
+  if (event.target.closest('[data-action="render-selected-cuts"]')) renderSelectedCuts();
+  const scheduleSelected = event.target.closest('[data-action="schedule-selected-cuts"]');
+  if (scheduleSelected) scheduleCuts([...selectedCandidateIds], 'cortes selecionados');
+  const selectCycle = event.target.closest('[data-action="select-cycle-cuts"]');
+  if (selectCycle) selectCycleCuts(selectCycle.dataset.cutIds.split(',').map(Number).map(id => allReviewCuts().find(cut => Number(cut.cut_id || cut.id) === id)).filter(Boolean));
+  const scheduleCycle = event.target.closest('[data-action="schedule-cycle-cuts"]');
+  if (scheduleCycle) scheduleCuts(scheduleCycle.dataset.cutIds.split(',').map(Number), 'cortes do ciclo');
+});
 document.addEventListener('click', (event) => {
   const editButton = event.target.closest('[data-action="edit-cut"]');
   if (editButton) { const cut = allReviewCuts().find(item => Number(item.cut_id || item.id) === Number(editButton.dataset.cutId)); if (cut) openCutEditor(cut); return; }

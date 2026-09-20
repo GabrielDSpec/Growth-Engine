@@ -18,6 +18,8 @@
 - A validação semântica rejeita limites no meio de frases e amplia segmentos Whisper até o encerramento da frase, dentro da duração máxima.
 - O contrato da Qwen sinaliza a oportunidade editorial `gancho_contexto_retorno`, sem inventar falas ou timestamps.
 - A montagem composta é persistida em `montagem_json` e o FFmpeg concatena gancho, contexto e destaque; cortes legados usam o intervalo contínuo.
+- A Qwen recebe o título original do vídeo, confere coerência com a transcrição e pode corrigir ortografia, nomes e entidades somente quando há evidência no contexto.
+- O ciclo oferece `Selecionar todos` e `Agendar ciclo`; a Central também oferece `Agendar selecionados` com uma única data e horário.
 
 **Status:** em implementacao
 **Progresso:** 95%
@@ -75,3 +77,5 @@ Cada rodada deve manter `perfil_id`, `video_id`, `video_titulo`, `job_id`, `nume
 - [ ] Persistir motivo individual para cada rejeicao estrutural.
 - [ ] Exibir historico completo de rodadas por video.
 - [x] Montar fisicamente cortes não contínuos no formato gancho, contexto e retorno ao destaque com FFmpeg.
+- [x] Conferir título original contra transcrição antes de gerar/refinar títulos editoriais.
+- [x] Agendar cortes renderizados em massa por seleção geral ou por ciclo.
