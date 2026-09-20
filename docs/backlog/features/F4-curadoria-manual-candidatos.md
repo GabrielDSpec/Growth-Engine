@@ -21,7 +21,7 @@
 - A Qwen recebe o título original do vídeo, confere coerência com a transcrição e pode corrigir ortografia, nomes e entidades somente quando há evidência no contexto.
 - O ciclo oferece `Selecionar todos` e `Agendar ciclo`; a Central também oferece `Agendar selecionados` com uma única data e horário.
 - A hierarquia visual mostra `Cortes gerados` por vídeo e ciclos como `Ciclo 1`, `Ciclo 2` etc.; cada ciclo é um acordeão recolhido por padrão e expande somente os cortes daquele ciclo.
-- A seleção individual usa um ícone alternável: círculo vazio para não selecionado e círculo com check verde para selecionado, com tooltip e estado `aria-pressed`.
+- A seleção individual usa um botão curto e alternável: ícone de círculo + `Postar` quando livre e círculo com check verde + `Selecionado` quando ativo, com tooltip e estado `aria-pressed`; a troca atualiza apenas o botão e mantém o ciclo aberto.
 
 **Status:** em implementacao
 **Progresso:** 95%

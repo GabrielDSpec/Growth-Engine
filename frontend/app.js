@@ -1060,7 +1060,7 @@ function renderCutCard(cut, options = {}) {
   const actions = createElement('div', { className: 'cut-card-actions' }, [domButton('Editar', 'pencil', 'secondary', 'edit-cut', { 'data-cut-id': cutId })]);
   if (canSelect) {
     const selected = selectedCandidateIds.has(cutId);
-    const selectButton = domButton('', selected ? 'circle-check' : 'circle', selected ? 'selected' : 'secondary', 'candidate-toggle-button', { 'data-cut-id': cutId, 'aria-pressed': String(selected), title: selected ? 'Selecionado para postagem' : 'Selecionar para postagem' });
+    const selectButton = domButton(selected ? 'Selecionado' : 'Postar', selected ? 'circle-check' : 'circle', selected ? 'selected' : 'secondary', 'candidate-toggle-button', { 'data-cut-id': cutId, 'aria-pressed': String(selected), title: selected ? 'Remover da seleção para postagem' : 'Selecionar para postagem' });
     selectButton.classList.add('cut-select-toggle');
     selectButton.setAttribute('aria-label', selected ? 'Remover da seleção para postagem' : 'Selecionar para postagem');
     actions.appendChild(selectButton);
@@ -1510,9 +1510,17 @@ document.addEventListener('click', (event) => {
   const selectionButton = event.target.closest('[data-action="candidate-toggle-button"]');
   if (selectionButton) {
     const cutId = Number(selectionButton.dataset.cutId);
-    if (selectedCandidateIds.has(cutId)) selectedCandidateIds.delete(cutId);
-    else selectedCandidateIds.add(cutId);
-    renderCuts();
+    const selected = !selectedCandidateIds.has(cutId);
+    if (selected) selectedCandidateIds.add(cutId);
+    else selectedCandidateIds.delete(cutId);
+    selectionButton.classList.toggle('selected', selected);
+    selectionButton.classList.toggle('secondary', !selected);
+    selectionButton.setAttribute('aria-pressed', String(selected));
+    selectionButton.setAttribute('aria-label', selected ? 'Remover da seleção para postagem' : 'Selecionar para postagem');
+    selectionButton.title = selected ? 'Remover da seleção para postagem' : 'Selecionar para postagem';
+    clearElement(selectionButton);
+    selectionButton.append(domIcon(selected ? 'circle-check' : 'circle'), selected ? 'Selecionado' : 'Postar');
+    refreshIcons();
     return;
   }
   const editButton = event.target.closest('[data-action="edit-cut"]');

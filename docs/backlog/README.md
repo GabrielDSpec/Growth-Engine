@@ -33,4 +33,4 @@ Após a revisão, o usuário seleciona os cortes pelos checkboxes. O botão `Age
 
 Jobs pesados compartilham um lock por perfil e vídeo. O cancelamento passa por `cancelling` até a thread liberar o lock; não se deve iniciar uma nova geração nem remover o lock manualmente durante esse intervalo.
 
-Na Central, a seção se chama `Cortes gerados`. O vídeo original agrupa os ciclos, e cada ciclo aparece como um acordeão `Ciclo N`, recolhido até o usuário clicar para ver seus cortes. A seleção individual é um botão de ícone com estado vazio/check; um corte que já possui MP4 não exibe novamente a ação `Renderizar`.
+Na Central, a seção se chama `Cortes gerados`. O vídeo original agrupa os ciclos, e cada ciclo aparece como um acordeão `Ciclo N`, recolhido até o usuário clicar para ver seus cortes. A seleção individual é um botão curto `Postar`/`Selecionado`, com ícone vazio/check e estado verde; a troca não fecha o ciclo. Um corte que já possui MP4 não exibe novamente a ação `Renderizar`.

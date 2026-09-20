@@ -306,7 +306,8 @@ h3 { font-size: 14px; letter-spacing: -.025em; }
 .cut-card-actions .button, .cut-card-actions .cut-select { width: 100%; justify-content: center; }
 .cut-card-actions .cut-select { order: 5; }
 .cut-card-actions .cut-select-toggle { width: 100%; min-height: 34px; justify-content: center; }
-.cut-card-actions .cut-select-toggle.selected { border-color: var(--lime-dark); background: var(--lime); color: var(--ink); }
+.cut-card-actions .cut-select-toggle.selected { border-color: #2f9e44; background: #2f9e44; color: #ffffff; }
+.cut-card-actions .cut-select-toggle.selected:hover { border-color: #237a35; background: #237a35; color: #ffffff; }
 .cut-card-meta, .cut-card-copy { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .cut-player { width: min(100%, 190px); aspect-ratio: 9 / 16; display: block; border-radius: 5px; background: #080607; object-fit: cover; }
 .cut-select { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); font-size: 12px; cursor: pointer; }
