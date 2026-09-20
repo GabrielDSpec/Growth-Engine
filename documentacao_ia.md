@@ -139,7 +139,7 @@ O fluxo operacional da Central é:
 5. Persistir candidatos por perfil, vídeo, job e ciclo. Candidatos abaixo do score recomendado continuam disponíveis para avaliação humana.
 6. Renderizar a prévia em MP4 vertical 9:16. Montagens não contínuas seguem a ordem gancho, contexto e retorno ao destaque; cortes contínuos usam o intervalo original.
 7. Revisar no modal da Central, com player, título, score, evidências e ações `Editar`, `Renderizar` e `Excluir`. A seleção para publicação é explícita.
-8. Agendar individualmente, por ciclo ou em lote. Sem data e hora informadas, o sistema calcula slots futuros usando recomendação semântica da Qwen, histórico do canal e horários de pico, sem repetir o mesmo instante.
+8. Agendar individualmente, por ciclo ou em lote. Sem data e hora informadas, o sistema calcula slots futuros usando recomendação semântica da Qwen, histórico do canal e horários de pico, sem repetir o mesmo instante. A cadência ocupa os três melhores horários configurados do mesmo dia antes de avançar para o dia seguinte, permitindo pelo menos três Shorts por dia quando houver cortes suficientes.
 9. Publicar pelo YouTube Data API com título, descrição, tags, privacidade privada e `publishAt`. O MP4 precisa existir e o perfil Google precisa ter o escopo `youtube.upload`.
 
 ### Contratos HTTP principais
@@ -178,4 +178,5 @@ Se o servidor não iniciar e informar tarefas ativas, aguarde o cancelamento con
 - Curadoria visual, edição, exclusão, seleção em lote, renderização vertical e montagem composta estão implementadas.
 - Cancelamento agora possui estado intermediário `cancelling` para evitar a corrida entre a resposta HTTP e a liberação do lock.
 - A publicação real está implementada no código, mas depende de reautorização Google com `youtube.upload` no perfil conectado.
+- Metadados inválidos como `N/A` são rejeitados antes do upload; descrições repetidas são deduplicadas e entidades só são corrigidas quando comprovadas no título original.
 - A validação automatizada disponível no ambiente passou com 40 testes; a execução completa com Qwen, FFmpeg e upload externo ainda depende dos serviços locais e credenciais.

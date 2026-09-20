@@ -8,6 +8,7 @@ from core.cutter import _montar_prompt, calcular_score_corte, calcular_score_obs
 from core.profiles import validar_url_canal
 from core.radar_sources import _rss_source_urls
 from core.task_runner import TaskRunner
+from core.publisher import _dedupe_repeated_text, _restore_entities, planejar_melhores_slots
 from core.notification_repository import select_notifications
 from core.content_analysis_repository import select_analysis_status
 from core.content_profile_repository import select_profile_videos
@@ -18,6 +19,19 @@ from core.cuts_repository import create_cut, list_cuts, update_cut
 
 
 class CoreContractsTests(unittest.TestCase):
+    def test_publisher_removes_repeated_description_sentences(self):
+        text = "Ela foi em 2005. Ela foi em 2005. O contexto explica a cena."
+        self.assertEqual(_dedupe_repeated_text(text), "Ela foi em 2005. O contexto explica a cena.")
+
+    def test_publisher_restores_entity_only_from_original_title(self):
+        self.assertEqual(_restore_entities("MISI Piranga 2026", "Miss Piranga 2026"), "Miss Piranga 2026")
+        self.assertEqual(_restore_entities("MISI desconhecida", "Evento Piranga"), "MISI desconhecida")
+
+    def test_scheduler_uses_three_slots_before_next_day(self):
+        slots = planejar_melhores_slots(4, perfil_id=999999, cuts=[{}, {}, {}, {}])
+        self.assertEqual(len(slots), 4)
+        self.assertEqual(len({slot["date"] for slot in slots[:3]}), 1)
+        self.assertNotEqual(slots[0]["date"], slots[3]["date"])
     def test_youtube_url_validation_accepts_only_supported_hosts(self):
         self.assertTrue(validar_url_canal("https://www.youtube.com/@canal"))
         self.assertTrue(validar_url_canal("https://youtu.be/video"))

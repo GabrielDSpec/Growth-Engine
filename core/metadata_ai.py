@@ -20,6 +20,9 @@ REGRAS DE OURO PARA O TÍTULO:
 - Máximo de 55 caracteres.
 - Proibido clichê genérico de IA. Use tensão, conflito ou constatação seca.
 - Linguagem de quem fala na roda de amigos, não de release corporativo.
+- Preserve nomes próprios, marcas, eventos e números exatamente como aparecem no contexto; não invente grafias.
+- Nunca responda "N/A", "NA", "não informado" ou texto vazio.
+- A descrição deve ter 1 ou 2 frases diferentes, sem repetir a mesma frase ou expressão em sequência.
 
 TRANSCRIÇÃO / CONTEXTO DO CORTE:
 {contexto}

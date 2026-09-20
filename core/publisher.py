@@ -1,5 +1,7 @@
 import json
 import os
+import re
+from difflib import get_close_matches
 from datetime import datetime, timedelta
 
 from google.oauth2.credentials import Credentials
@@ -53,13 +55,59 @@ def _metadata_for_cut(cut):
         f"Conclusão: {cut.get('conclusao', '')}",
     ]))
     metadata = gerar_metadados_blindados(context)
-    title = str(metadata.get("titulo") or cut.get("titulo") or "Corte editorial").strip()[:100]
-    description = str(metadata.get("descricao") or metadata.get("descricao_short") or cut.get("promessa") or "").strip()
     tags = metadata.get("tags") or []
+    original_title = str(cut.get("video_titulo") or "").strip()
+    title = _metadata_text(metadata.get("titulo"), cut.get("titulo"))
+    title = _restore_entities(title, original_title)[:100]
+    if not _usable_metadata(title):
+        title = _restore_entities(_metadata_text(cut.get("titulo"), cut.get("gancho")), original_title)[:100]
+    if not _usable_metadata(title):
+        title = _restore_entities(_metadata_text(original_title, "Corte do canal"), original_title)[:100]
+    description = _metadata_text(metadata.get("descricao") or metadata.get("descricao_short"), cut.get("promessa") or cut.get("gancho") or cut.get("conclusao"))
+    description = _restore_entities(_dedupe_repeated_text(description), original_title)
+    if not _usable_metadata(description):
+        description = _restore_entities(_dedupe_repeated_text(" ".join(filter(None, [cut.get("gancho"), cut.get("promessa"), cut.get("conclusao")]))) or title, original_title)
     if isinstance(tags, str):
         tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
     tags = [str(tag).strip()[:30] for tag in tags if str(tag).strip()][:30]
     return title, description, tags
+
+
+def _metadata_text(value, fallback=""):
+    text = str(value or "").strip()
+    if not _usable_metadata(text):
+        text = str(fallback or "").strip()
+    return re.sub(r"\s+", " ", text)
+
+
+def _usable_metadata(value):
+    normalized = re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+    return bool(normalized) and normalized not in {"na", "naoindisponivel", "seminformacao", "null", "none"}
+
+
+def _dedupe_repeated_text(text):
+    parts = [part.strip() for part in re.split(r"(?<=[.!?])\s+", str(text or "")) if part.strip()]
+    result = []
+    for part in parts:
+        if part.casefold() not in {item.casefold() for item in result}:
+            result.append(part)
+    return " ".join(result)
+
+
+def _restore_entities(text, original_title):
+    """Corrige apenas tokens parecidos com entidades comprovadas no título original."""
+    original_tokens = [token for token in re.findall(r"[\wÀ-ÿ]+", original_title) if len(token) >= 3]
+    comparable_tokens = {token.casefold(): token for token in original_tokens}
+    if not original_tokens:
+        return text
+    replacements = {}
+    for token in re.findall(r"[\wÀ-ÿ]+", text):
+        match = get_close_matches(token.casefold(), list(comparable_tokens), n=1, cutoff=0.70)
+        if match and token.casefold() != match[0]:
+            replacements[token] = comparable_tokens[match[0]]
+    for wrong, correct in replacements.items():
+        text = re.sub(rf"\b{re.escape(wrong)}\b", correct, text, flags=re.IGNORECASE)
+    return text
 
 
 def _historical_hour_scores(perfil_id):
@@ -97,21 +145,29 @@ def planejar_melhores_slots(quantidade, perfil_id=1, cuts=None):
             candidatos.append((score, momento))
     escolhidos = []
     momentos_usados = set()
-    for cut in (cuts or [{}] * quantidade)[:quantidade]:
+    cuts = (cuts or [{}] * quantidade)[:quantidade]
+    # Mantém a cadência editorial: ocupa os melhores horários do mesmo dia
+    # antes de avançar, permitindo três Shorts por dia com os slots configurados.
+    candidatos_por_dia = {}
+    for item in candidatos:
+        candidatos_por_dia.setdefault(item[1].date(), []).append(item)
+    dias = sorted(candidatos_por_dia)
+    for index, cut in enumerate(cuts):
         recommendation = cut.get("horario_recomendado") or {}
         preferred_days = recommendation.get("dias_preferidos") or []
         period = recommendation.get("periodo")
         confidence = float(recommendation.get("confianca") or 0)
         ranked = []
-        for channel_score, momento in candidatos:
-            semantic_score = 0
-            if momento.weekday() in preferred_days:
-                semantic_score += 30 * confidence
-            if period in periodos and momento.hour in periodos[period]:
-                semantic_score += 25 * confidence
-            ranked.append((channel_score + semantic_score, momento))
-        ranked.sort(key=lambda item: (-item[0], item[1]))
-        momento = next((item for _, item in ranked if item not in momentos_usados), None)
+        for dia in dias:
+            for channel_score, momento in candidatos_por_dia[dia]:
+                semantic_score = 0
+                if momento.weekday() in preferred_days:
+                    semantic_score += 30 * confidence
+                if period in periodos and momento.hour in periodos[period]:
+                    semantic_score += 25 * confidence
+                ranked.append((dia, channel_score + semantic_score, momento))
+        ranked.sort(key=lambda item: (item[0], -item[1], item[2]))
+        momento = next((momento for _, _, momento in ranked if momento not in momentos_usados), None)
         if momento:
             escolhidos.append(momento)
             momentos_usados.add(momento)
