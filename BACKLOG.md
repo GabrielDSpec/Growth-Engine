@@ -15,6 +15,7 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [x] Especificação corporativa: consolidada a proposta de valor, capacidades, arquitetura, integrações, maturidade, riscos, critérios de aceite e roadmap do Growth Engine para apresentação executiva.
 - [x] Stack tecnológica documentada: Python, SPA HTML/CSS/JavaScript, SQLite/WAL, Ollama/Qwen, Whisper/DirectCompute, FFmpeg, yt-dlp, Playwright, RSS e painel Windows foram relacionados às suas responsabilidades e dependências de implantação.
 - [x] README de portfólio: o repositório privado apresenta objetivo, fluxo, arquitetura, stack, maturidade, segurança, execução local e links para a documentação corporativa.
+- [x] Especificação corporativa em inglês: tradução técnica completa adicionada ao repositório e vinculada ao README para apresentação internacional.
 - [x] Notificações: limpar lidas remove os itens em tempo real do painel, atualiza o contador e mantém a exclusão persistida.
 - [x] Notificações: botão `Ler todas` marca todas as notificações não lidas do perfil ativo em uma única operação e atualiza o contador do painel.
 - [x] Biblioteca: análise manual individual com fila, progresso, ETA e notificações de conclusão ou falha.

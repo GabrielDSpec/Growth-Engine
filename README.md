@@ -123,6 +123,7 @@ Nenhuma credencial, token, banco de dados, mídia, cache ou perfil de navegador 
 ## Documentação
 
 - [Especificação corporativa](docs/especificacao_corporativa_growth_engine.md)
+- [Corporate specification - English](docs/corporate_specification_growth_engine.en.md)
 - [Arquitetura modular](docs/arquitetura_modular.md)
 - [Documentação de IA](documentacao_ia.md)
 - [Backlog do projeto](BACKLOG.md)
