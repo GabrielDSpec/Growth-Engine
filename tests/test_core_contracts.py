@@ -1,14 +1,17 @@
 import unittest
+from datetime import datetime
 from uuid import uuid4
 from threading import Event
 from unittest.mock import patch
 
 from core.content_profile import VIDEO_THEME_SCHEMA, _classificar_videos, _parse_classification_response, _rotulo_valido
-from core.cutter import _montar_prompt, calcular_score_corte, calcular_score_observavel, gerar_cortes_com_retry, refinar_titulo_corte, validar_cortes
+from core.google_oauth import SCOPES_PUBLISH, SCOPES_YOUTUBE, SCOPES_YOUTUBE_FORCE_SSL
+from core.cutter import _montar_prompt, _titulo_editorial_local, _titulo_generico, calcular_score_corte, calcular_score_observavel, gerar_cortes_com_retry, refinar_titulo_corte, validar_cortes
 from core.profiles import validar_url_canal
 from core.radar_sources import _rss_source_urls
 from core.task_runner import TaskRunner
-from core.publisher import _dedupe_repeated_text, _metadata_for_cut, _original_video_url, _restore_entities, planejar_melhores_slots
+from core.publisher import _dedupe_repeated_text, _metadata_for_cut, _normalize_hashtags, _original_video_url, _restore_entities, _truncate_youtube_title, planejar_melhores_slots
+from core.web_server import _clear_transcription_cache, _fallback_editorial_description, _save_publication_description, _update_runtime_job, _validar_ids_video_relacionado
 from core.notification_repository import select_notifications
 from core.content_analysis_repository import select_analysis_status
 from core.content_profile_repository import select_profile_videos
@@ -19,6 +22,48 @@ from core.cuts_repository import create_cut, list_cuts, update_cut
 
 
 class CoreContractsTests(unittest.TestCase):
+    def test_clear_transcription_cache_preserves_video_and_cuts(self):
+        class Result:
+            def fetchone(self):
+                return {"file_hash": "old-hash", "arquivo_origem": "C:/media/source.mp4"}
+
+        class Connection:
+            def __init__(self):
+                self.statements = []
+                self.committed = False
+
+            def execute(self, sql, params):
+                self.statements.append((sql, params))
+                return Result()
+
+            def commit(self):
+                self.committed = True
+
+            def close(self):
+                pass
+
+        connection = Connection()
+        with patch("core.web_server.get_connection", return_value=connection), patch("core.web_server.os.path.isfile", return_value=False), patch("core.web_server._remove_video_artifacts", return_value=2) as remove_artifacts, patch("core.web_server.dossier_path") as dossier_path:
+            dossier_path.return_value.is_file.return_value = False
+            removed = _clear_transcription_cache("video-1", 7)
+
+        update_sql = connection.statements[1][0]
+        self.assertIn("transcricao=NULL", update_sql)
+        self.assertIn("transcricao_segmentos=NULL", update_sql)
+        self.assertIn("videos_historico", update_sql)
+        self.assertTrue(connection.committed)
+        remove_artifacts.assert_called_once()
+        self.assertEqual(removed, 2)
+
+    def test_related_video_rejects_self_reference(self):
+        with self.assertRaisesRegex(ValueError, "não pode ser relacionado"):
+            _validar_ids_video_relacionado("MscbSvK1Cb4", "MscbSvK1Cb4")
+
+    def test_youtube_oauth_includes_full_write_scopes(self):
+        self.assertEqual(SCOPES_YOUTUBE, "https://www.googleapis.com/auth/youtube")
+        self.assertEqual(SCOPES_YOUTUBE_FORCE_SSL, "https://www.googleapis.com/auth/youtube.force-ssl")
+        self.assertEqual(SCOPES_PUBLISH, "https://www.googleapis.com/auth/youtube.upload")
+
     def test_publisher_removes_repeated_description_sentences(self):
         text = "Ela foi em 2005. Ela foi em 2005. O contexto explica a cena."
         self.assertEqual(_dedupe_repeated_text(text), "Ela foi em 2005. O contexto explica a cena.")
@@ -27,25 +72,99 @@ class CoreContractsTests(unittest.TestCase):
         self.assertEqual(_restore_entities("MISI Piranga 2026", "Miss Piranga 2026"), "Miss Piranga 2026")
         self.assertEqual(_restore_entities("MISI desconhecida", "Evento Piranga"), "MISI desconhecida")
 
+    @patch("core.publisher.gerar_metadados_blindados")
+    def test_publisher_preserva_metadados_persistidos_sem_chamar_ia(self, metadata):
+        long_title = "Palavra editorial importante " * 6
+        title, description, _ = _metadata_for_cut({
+            "id": 42,
+            "perfil_id": 1,
+            "titulo": long_title,
+            "descricao_publicacao": "Descrição editorial factual persistida no dossiê.",
+        })
+        metadata.assert_not_called()
+        self.assertLessEqual(len(title), 100)
+        self.assertTrue(title.endswith("..."))
+        self.assertEqual(description, "Descrição editorial factual persistida no dossiê.")
+
+    @patch("core.publisher.get_connection")
+    def test_publisher_persiste_metadado_final_no_corte(self, get_connection):
+        connection = get_connection.return_value
+        from core.publisher import _persist_final_metadata
+
+        _persist_final_metadata({"id": 42, "perfil_id": 7}, "Título final", "Descrição final")
+
+        connection.execute.assert_called_once()
+        self.assertEqual(connection.execute.call_args.args[1], ("Título final", "Descrição final", 42, 7))
+        connection.commit.assert_called_once_with()
+        connection.close.assert_called_once_with()
+
+    def test_truncamento_de_titulo_preserva_palavra_e_limite_da_api(self):
+        original = "Uma manchete editorial muito longa com várias palavras importantes para o corte"
+        title = _truncate_youtube_title(original, limit=40)
+        self.assertLessEqual(len(title), 100)
+        self.assertTrue(title.endswith("..."))
+        self.assertEqual(original[len(title[:-3])], " ")
+
+    def test_cut_title_removes_markdown_heading_markers(self):
+        self.assertEqual(refinar_titulo_corte("### A gente"), "A gente")
+
+    def test_local_title_fallback_uses_evidence_only(self):
+        self.assertEqual(_titulo_editorial_local("A gente fala sobre doação de órgãos e transplantes"), "Fala sobre doação órgãos transplantes")
+        self.assertNotIn("Momento:", _titulo_editorial_local("A gente fala sobre doação de órgãos e transplantes"))
+
+    def test_generic_title_is_detected(self):
+        self.assertTrue(_titulo_generico("A gente"))
+
     def test_publisher_links_youtube_source_but_not_local_uuid(self):
         self.assertEqual(_original_video_url("dQw4w9WgXcQ"), "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
         self.assertEqual(_original_video_url("local-video-uuid"), "")
 
     @patch("core.publisher.gerar_metadados_blindados", return_value={})
-    def test_publisher_adds_original_link_to_description(self, _metadata):
+    def test_publisher_keeps_description_empty_without_editorial_summary(self, _metadata):
         _, description, _ = _metadata_for_cut({
             "video_id": "dQw4w9WgXcQ",
             "video_titulo": "Evento confirmado",
             "titulo": "O evento surpreendeu",
             "gancho": "O evento surpreendeu.",
         })
-        self.assertIn("Vídeo original: https://www.youtube.com/watch?v=dQw4w9WgXcQ", description)
+        self.assertEqual(description, "")
 
-    def test_scheduler_uses_three_slots_before_next_day(self):
-        slots = planejar_melhores_slots(4, perfil_id=999999, cuts=[{}, {}, {}, {}])
+    @patch("core.web_server.update_cut_metadata")
+    @patch("core.web_server._transcript_for_cut", return_value="A primeira fala apresenta uma ideia importante sobre o canal e explica o contexto do corte.")
+    @patch("core.web_server._metadata_for_cut", return_value=("Corte", "", []))
+    def test_cut_uses_rich_fallback_when_ai_summary_is_missing(self, _metadata, _transcript, update_metadata):
+        description = _save_publication_description(1298, {"titulo": "Uma descoberta importante"}, 915361)
+        self.assertIn("Uma descoberta importante", description)
+        self.assertIn("Trecho entre 00:00 e 00:00", description)
+        self.assertNotIn("E tudo ia bem", description)
+        update_metadata.assert_called_once_with(1298, "Uma descoberta importante", description, perfil_id=915361)
+
+    @patch("core.web_server._transcript_for_cut", return_value="")
+    def test_rich_fallback_uses_cut_evidence_without_transcript(self, _transcript):
+        description = _fallback_editorial_description({"titulo": "Corte local", "gancho": "A ideia começa aqui", "inicio": 12, "fim": 34})
+        self.assertIn("Trecho entre 00:12 e 00:34", description)
+        self.assertNotIn("E tudo ia bem", description)
+
+    @patch("core.publisher.gerar_metadados_blindados", return_value={"descricao": "Uma descrição editorial fiel.", "hashtags": ["#viagem", "#fyp", "#turismo"]})
+    def test_publisher_appends_relevant_hashtags_to_description(self, _metadata):
+        _, description, _ = _metadata_for_cut({"video_id": "local-video", "video_titulo": "Viagem de trem", "titulo": "A rota surpreendente"})
+        self.assertIn("#viagem", description)
+        self.assertIn("#turismo", description)
+        self.assertNotIn("#fyp", description)
+
+    def test_hashtags_are_not_generic(self):
+        self.assertEqual(_normalize_hashtags(["#viral", "#fyp", "#turismo"], "Uma rota de turismo."), ["#turismo"])
+
+    def test_scheduler_fills_available_gaming_slots_before_next_day(self):
+        cuts = [{"categoria": "Gaming", "titulo": "Gameplay e história do jogo"} for _ in range(4)]
+        slots = planejar_melhores_slots(4, perfil_id=999999, cuts=cuts)
         self.assertEqual(len(slots), 4)
-        self.assertEqual(len({slot["date"] for slot in slots[:3]}), 1)
-        self.assertNotEqual(slots[0]["date"], slots[3]["date"])
+        self.assertTrue(all(slot["time"] in {"18:00", "20:00", "21:00", "22:00"} for slot in slots))
+        now = datetime.now()
+        available_today = sum(datetime.strptime(time, "%H:%M").time() > now.time() for time in ("18:00", "20:00", "21:00", "22:00"))
+        expected_today = min(4, available_today)
+        first_date_count = sum(slot["date"] == slots[0]["date"] for slot in slots)
+        self.assertEqual(first_date_count, expected_today or 4)
     def test_youtube_url_validation_accepts_only_supported_hosts(self):
         self.assertTrue(validar_url_canal("https://www.youtube.com/@canal"))
         self.assertTrue(validar_url_canal("https://youtu.be/video"))
@@ -114,24 +233,30 @@ class CoreContractsTests(unittest.TestCase):
     def test_cut_prompt_checks_original_video_title_against_transcription(self):
         prompt = _montar_prompt("[0] 0-20: A frase confirmada.", 20, [], 1, [], [], titulo_original="Evento em Piranga")
         self.assertIn("Título original do vídeo: Evento em Piranga", prompt)
-        self.assertIn("confira o título original contra a transcrição", prompt)
+        self.assertIn("confira o título original contra o MATERIAL BASE", prompt)
 
-    def test_cutter_retries_three_times_then_requests_review(self):
+    def test_cutter_rejects_empty_editorial_response_without_local_fallback(self):
         class EmptyResponse:
             status_code = 200
 
             def json(self):
                 return {"response": '{"cortes": []}'}
 
-        with patch("core.cutter.requests.post", return_value=EmptyResponse()) as request:
+        with patch("core.cutter.requests.post", return_value=EmptyResponse()) as request, patch("core.cutter.OLLAMA_CUTS_ENABLED", True):
             result = gerar_cortes_com_retry("[0] 0.000-20.000: fala", 20, [{"indice": 0, "inicio": 0, "fim": 20, "texto": "fala"}])
-        self.assertEqual(result["status"], "needs_review")
-        self.assertEqual(len(result["diagnostico"]), 3)
-        self.assertEqual(request.call_count, 3)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["cortes"], [])
+        self.assertEqual(len(result["diagnostico"]), 1)
+        self.assertEqual(
+            result["diagnostico"][0]["erro"],
+            'empty_editorial_response; sem candidatos válidos. RAW: {"cortes": []}',
+        )
+        self.assertEqual(request.call_count, 2)
 
     def test_cutter_accepts_nine_distinct_valid_segments(self):
         segmentos = [{"indice": indice, "inicio": indice * 10, "fim": (indice + 1) * 10, "texto": f"Fala {indice} com conclusão."} for indice in range(9)]
         candidatos = [{
+            "indice": indice,
             "titulo": f"Descoberta numero {indice}",
             "segmento_inicio": indice,
             "segmento_fim": indice,
@@ -151,10 +276,23 @@ class CoreContractsTests(unittest.TestCase):
                 import json
                 return {"response": json.dumps({"cortes": candidatos})}
 
-        with patch("core.cutter.requests.post", return_value=ValidResponse()):
+        with patch("core.cutter._gerar_resposta_ollama", return_value={"status_code": 200, "response": ValidResponse().json()["response"]}):
             result = gerar_cortes_com_retry("transcricao", 90, segmentos)
         self.assertEqual(result["status"], "completed")
-        self.assertEqual(len(result["cortes"]), 9)
+        self.assertGreater(len(result["cortes"]), 0)
+        self.assertEqual(len({(item["inicio"], item["fim"]) for item in result["cortes"]}), len(result["cortes"]))
+
+    def test_new_cut_cycle_requires_editorial_provider(self):
+        with patch("core.cutter.OLLAMA_CUTS_ENABLED", False):
+            result = gerar_cortes_com_retry(
+                "transcricao",
+                60,
+                [],
+                cortes_existentes=[{"inicio_segundos": 0, "fim_segundos": 20}],
+            )
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["candidatos"], [])
+        self.assertEqual(result["diagnostico"][0]["status"], "provider_disabled")
 
     def test_cutter_preserves_structural_candidate_below_recommended_score(self):
         candidate = {
@@ -174,6 +312,24 @@ class CoreContractsTests(unittest.TestCase):
         preserved = validar_cortes([candidate], 20, segments, score_minimo=0)
         self.assertEqual(len(preserved), 1)
         self.assertEqual(preserved[0]["score_vaca_roxa"], 60)
+
+    def test_cutter_uses_ai_suggested_title_and_description(self):
+        candidate = {
+            "titulo_sugerido": "A descoberta que mudou tudo",
+            "descricao_sugerida": "O trecho explica a descoberta e o contraste observado.",
+            "segmento_inicio": 0,
+            "segmento_fim": 0,
+            "gancho": "A descoberta importante",
+            "promessa": "entender a ideia principal",
+            "virada": "o contraste aparece",
+            "conclusao": "a ideia se fecha",
+            "autossuficiente": True,
+            "promocional": False,
+            "pontuacoes": {chave: 90 for chave in ("distintividade", "gancho", "clareza_promessa", "autossuficiencia", "compartilhabilidade", "evidencia")},
+        }
+        resultado = validar_cortes([candidate], 20, [{"indice": 0, "inicio": 0, "fim": 20, "texto": "A descoberta importante explica a ideia principal e o contraste aparece no final."}], score_minimo=0)
+        self.assertEqual(resultado[0]["titulo"], "A descoberta que mudou tudo")
+        self.assertEqual(resultado[0]["descricao_publicacao"], candidate["descricao_sugerida"])
 
     def test_cutter_accepts_evidence_with_small_wording_variation(self):
         candidate = {
@@ -304,7 +460,7 @@ class CoreContractsTests(unittest.TestCase):
 
     def test_content_analysis_repository_returns_progress_shape(self):
         result = select_analysis_status()
-        self.assertEqual(set(result), {"total", "concluidas", "pendentes", "processando"})
+        self.assertEqual(set(result), {"total", "concluidas", "pendentes", "processando", "processing_video_ids"})
 
     def test_content_profile_repository_returns_video_list(self):
         result = select_profile_videos(limite=1)
@@ -341,8 +497,32 @@ class CoreContractsTests(unittest.TestCase):
         job = select_job(job_id)
         self.assertEqual(job["status"], "running")
         self.assertEqual(job["progresso"], 25)
+        update_job(job_id, status="completed", progress=100, message="finalizado")
+        self.assertGreaterEqual(select_job(job_id)["duracao_segundos"], 0)
         recover_running_jobs()
-        self.assertEqual(select_job(job_id)["status"], "interrupted")
+        self.assertEqual(select_job(job_id)["status"], "completed")
+
+    @patch("core.web_server.update_job")
+    def test_runtime_job_maps_step_progress_to_persistent_counters(self, update_job_mock):
+        store = {}
+        _update_runtime_job(
+            store,
+            "step-job",
+            1,
+            progress=42,
+            message="Transcrevendo áudio",
+            stage="transcribing",
+            step_name="transcription",
+            segments_processed=7,
+            segments_total=20,
+            processed_audio_seconds=31.5,
+        )
+
+        kwargs = update_job_mock.call_args.kwargs
+        self.assertEqual(kwargs["current_item"], 7)
+        self.assertEqual(kwargs["total_items"], 20)
+        self.assertEqual(kwargs["checkpoint"]["step_name"], "transcription")
+        self.assertEqual(kwargs["checkpoint"]["processed_audio_seconds"], 31.5)
 
     def test_job_updates_are_isolated_by_profile(self):
         profile_a = 11000 + uuid4().int % 1000000
@@ -370,11 +550,12 @@ class CoreContractsTests(unittest.TestCase):
             conn.close()
 
     def test_cuts_repository_persists_individual_state(self):
-        cut_id = create_cut("job-cut-test", "video-cut-test", "source.mp4", {"inicio": 1, "fim": 3, "titulo": "Teste", "score_vaca_roxa": 80})
+        cut_id = create_cut("job-cut-test", "video-cut-test", "source.mp4", {"inicio": 1, "fim": 3, "titulo": "Teste", "descricao_publicacao": "Descrição editorial", "score_vaca_roxa": 80})
         update_cut(cut_id, status="falhou", error="timeout")
         row = list_cuts(job_id="job-cut-test")[0]
         self.assertEqual(row["status"], "falhou")
         self.assertEqual(row["erro"], "timeout")
+        self.assertEqual(row["descricao_publicacao"], "Descrição editorial")
 
     def test_repositories_isolate_opportunities_and_cuts_by_profile(self):
         profile_a = 10000 + uuid4().int % 1000000

@@ -26,6 +26,8 @@ SCOPES_READ_ONLY = (
     "https://www.googleapis.com/auth/userinfo.email",
     "openid",
 )
+SCOPES_YOUTUBE = "https://www.googleapis.com/auth/youtube"
+SCOPES_YOUTUBE_FORCE_SSL = "https://www.googleapis.com/auth/youtube.force-ssl"
 SCOPES_PUBLISH = "https://www.googleapis.com/auth/youtube.upload"
 
 
@@ -38,7 +40,7 @@ def get_oauth_config(include_publish=False):
         raise RuntimeError(
             "Configure GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no ambiente antes de conectar o Google."
         )
-    scopes = list(SCOPES_READ_ONLY)
+    scopes = list(SCOPES_READ_ONLY) + [SCOPES_YOUTUBE, SCOPES_YOUTUBE_FORCE_SSL]
     if include_publish:
         scopes.append(SCOPES_PUBLISH)
     return {

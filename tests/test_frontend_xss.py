@@ -38,7 +38,8 @@ class FrontendXssContractsTests(unittest.TestCase):
 
     def test_cuts_use_text_content_helpers_for_untrusted_content(self):
         cuts = function_body("renderCuts")
-        self.assertIn("segment.texto", cuts)
+        self.assertIn("contentSummary", cuts)
+        self.assertNotIn("segment.texto", cuts)
         self.assertIn("cut.titulo", cuts)
         self.assertIn("cut.gancho", cuts)
         self.assertIn("domText", cuts)
@@ -54,10 +55,48 @@ class FrontendXssContractsTests(unittest.TestCase):
         cuts = function_body("renderCuts")
         self.assertIn("needs_review", polling)
         self.assertIn("parseJobDiagnostics", cuts)
+        self.assertIn("renderedCandidates", cuts)
+        self.assertIn("candidato(s) encontrado(s) neste bloco", cuts)
+        self.assertIn("nenhum candidato local foi renderizado nesta rodada", cuts)
         self.assertIn("task-review-details", cuts)
         self.assertIn("candidate-toggle", cuts)
         self.assertIn("render-selected-cuts", cuts)
         self.assertNotIn("innerHTML", cuts)
+
+    def test_related_video_picker_sends_active_profile(self):
+        picker = function_body("openRelatedVideoPicker")
+        self.assertIn("/api/youtube/related-videos?initial=", picker)
+        self.assertIn("X-Profile-Id", picker)
+        self.assertIn("activeProfileId", picker)
+
+    def test_profile_menu_can_reauthorize_youtube(self):
+        self.assertIn("profile-reauthorize", SOURCE)
+        self.assertIn("reauthorize=1", SOURCE)
+
+    def test_persisted_cuts_are_not_removed_by_temporal_overlap(self):
+        review_cuts = function_body("allReviewCuts")
+        self.assertIn("const byId = new Map()", review_cuts)
+        self.assertIn("return [...byId.values()]", review_cuts)
+        self.assertNotIn("const overlap", review_cuts)
+
+    def test_cut_source_exposes_editorial_status_and_delete_action(self):
+        cuts = function_body("renderCuts")
+        self.assertIn("has_editorial", cuts)
+        self.assertIn("Gerar editorial", cuts)
+        self.assertIn("Ler editorial", cuts)
+        self.assertIn("delete-editorial-dossier", cuts)
+        self.assertIn("editorial-status", cuts)
+        self.assertIn("role: 'status'", cuts)
+        self.assertNotIn("domButton(selectedCutSource.has_editorial ? 'Editorial disponível'", cuts)
+        self.assertLess(cuts.index("transcriptionActions.push(domButton('Apagar editorial'"), cuts.index("transcriptionActions.push(editorialStatus)"))
+        self.assertIn("/api/editorial/delete-dossier", function_body("deleteEditorialDossier"))
+
+    def test_editorial_reader_uses_safe_dom_and_dossier_endpoint(self):
+        reader = function_body("openEditorialDossier")
+        self.assertIn("/api/editorial/dossier?video_id=", reader)
+        self.assertIn("melhores_momentos", reader)
+        self.assertIn("createElement('article'", reader)
+        self.assertNotIn("innerHTML", reader)
 
 
 if __name__ == "__main__":

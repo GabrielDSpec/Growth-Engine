@@ -11,8 +11,8 @@ Documento de transferencia para continuidade do projeto e uso por outros agentes
 - Cache atual: 312 registros de videos.
 - Classificacao atual: 219 Shorts, 87 videos longos e 6 nao classificados.
 - Taxa media de likes confirmada pela API: aproximadamente 2,58%.
-- Autopsia em andamento: primeira rodada dos 15 videos longos mais vistos.
-- Ultimo estado observado: 6/15 concluidos, 6/87 no cache. O sexto video e longo e a transcricao Whisper esta avancando internamente; o contador externo so avanca quando cada video termina por completo.
+- Autopsia: primeira rodada dos 15 videos longos mais vistos concluida; validacoes operacionais adicionais permanecem registradas no backlog.
+- Estado documental atualizado em 2026-10-02: pipeline de cortes, frontend seguro, isolamento por perfil, sincronizacao publica e auto-cura de MP4 implementados; validacoes reais do Studio, payload bruto da Qwen, motivos individuais de rejeicao e scheduler legado continuam pendentes.
 
 ## O que foi implementado
 
@@ -21,7 +21,7 @@ Documento de transferencia para continuidade do projeto e uso por outros agentes
 - Criado `iniciar_servidor.py` para iniciar o painel e abrir o navegador.
 - Criado `iniciar_growth_engine.bat` para executar por duplo clique.
 - Criado `configurar_segredos.py` com janela Tkinter para permitir colar Client ID e Client Secret.
-- Criado `core/secrets.py` usando DPAPI do Windows.
+- Criado `core/app_secrets.py` usando DPAPI do Windows.
 - Segredos carregados apenas em memoria antes do OAuth.
 - Chave Fernet de tokens validada e regenerada quando estava invalida.
 - `config.secrets` adicionado ao `.gitignore`.
@@ -124,6 +124,45 @@ Documento de transferencia para continuidade do projeto e uso por outros agentes
 - A Autópsia passa a salvar progresso persistente em uma próxima inicialização, permitindo retomada e diagnóstico após reinício.
 
 Ordem escolhida: consolidar Autópsia, implementar Score de oportunidade, implementar briefing, integrar ao Radar e depois criar testes e memória editorial.
+
+## Atualização de 02/10/2026 - Integridade, auto-cura e conformidade documental
+
+- `core/media_tools.py` agora usa uma validação comum de saída: o FFmpeg só é considerado concluído quando o arquivo existe e possui tamanho maior que zero, inclusive em montagens compostas.
+- `core/cuts_repository.py` ganhou auto-cura para cortes `concluido` cujo MP4 foi removido ou corrompido: o registro passa para `falhou` e recebe `Arquivo físico ausente ou corrompido` em `erro`.
+- `GET /api/cuts` executa essa auto-cura antes de devolver a lista; o registro não é apagado silenciosamente.
+- Agendamento individual, agendamento em lote e postagem imediata em lote recusam arquivos ausentes/vazios com HTTP 400 antes de criar o job.
+- Fallbacks locais de títulos removem fillers de fala, limitam o texto e preservam templates editoriais sem depender do Ollama.
+- Sincronização de vídeos relacionados usa atualização sem cache, ordenação por data de publicação e proteção contra processos duplicados do servidor.
+- Validação executada: `py_compile` dos módulos afetados, `node --check`, `46` testes focados e parse válido de `docs/backlog/index.json`.
+- Não foi reiniciado o servidor durante essas alterações para não interromper jobs ativos.
+
+Pendências mantidas deliberadamente: validação autenticada real dos seletores do YouTube Studio, reautorização com `youtube.upload`, persistência de payload bruto/motivos individuais da Qwen, renderização real em múltiplas proporções e migração do scheduler legado.
+
+## Atualização de 02/10/2026 - Unificação CPU da renderização de Shorts
+
+- Criado `montar_comando_render()` em `core/media_tools.py`; `renderizar_corte()` e `renderizar_corte_shorts()` passaram a usar o mesmo comando FFmpeg.
+- O comando usa `-ss` antes de `-i`, `-t` relativo, `crop` seguido de `scale=1080:1920:flags=bicubic,format=yuv420p`, `libx264` com `preset faster`/CRF 20, AAC 160k e `+faststart`.
+- O smart crop facial do OpenCV continua sendo calculado em `calcular_corte_com_rosto()` e fornece o trecho `crop` ao helper; o fallback central continua disponível.
+- Montagens com múltiplos intervalos também usam o helper para cada parte renderizada.
+- Validação executada: novo contrato do comando, `6` testes em `tests/test_media_tools.py` e `py_compile` de `core/media_tools.py` e `core/cutter.py`.
+- Benchmark real, modo de seek preciso, encoder GPU e cache das amostras faciais permanecem pendentes.
+
+## Atualização de 02/10/2026 - Seleção AMF e fallback CPU
+
+- `obter_opcoes_encoder()` consulta os encoders anunciados pelo FFmpeg e, em `SHORTS_ENCODER=auto`, prioriza `h264_amf` com `quality`, `vbr_peak` e `yuv420p`.
+- `libx264/faster/CRF 20` permanece disponível por `SHORTS_ENCODER=libx264` e como fallback automático quando o FFmpeg reporta falha reconhecível de AMF, device ou inicialização.
+- O fallback registra `Falha no AMF, caindo para CPU` e executa o comando uma única vez novamente com CPU; erros de entrada, filtro ou disco não são mascarados.
+- A seleção de capacidade é cacheada por executável e as duas rotas de renderização usam o mesmo executor.
+- Validação executada: contratos AMF/CPU/fallback, `8` testes em `tests/test_media_tools.py` e compilação dos módulos afetados.
+- Pendente: render real na Radeon RX 9060 XT, comparação de tempo/tamanho/qualidade e validação de áudio/enquadramento em múltiplas proporções.
+
+## Atualização de 02/10/2026 - Leitura em lote de notificações
+
+- O menu de notificações ganhou `Ler todas`.
+- O novo `POST /api/notifications/read-all` marca somente notificações não lidas do perfil ativo e retorna a lista/contador atualizado.
+- A operação usa atualização SQL em lote, mantém o histórico e atualiza o indicador visual do frontend.
+- O frontend possui fallback para instâncias antigas do servidor que retornem HTTP 404 nessa rota, usando a API individual sem exigir reinício imediato.
+- Validação executada: `node --check`, `py_compile` dos módulos de notificações/web e `46` testes de contratos/frontend.
 
 ## Comandos de verificacao
 

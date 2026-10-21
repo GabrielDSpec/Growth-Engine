@@ -1,4 +1,6 @@
 import json
+import os
+import socket
 
 from core.autopsia import _consultar_qwen
 from core.opportunities_repository import insert_opportunity, select_opportunities, select_opportunity, select_top15_analyzed_videos, select_video_names
@@ -78,6 +80,7 @@ def listar_oportunidades(limit=30, perfil_id=1):
         item["evidence"] = evidence
         item["score"] = calcular_score(item)
         result.append(item)
+    result.sort(key=lambda item: float(item.get("score") or 0), reverse=True)
     return result
 
 
@@ -137,11 +140,34 @@ def _validar_sugestoes(payload, source_rows):
     return validated
 
 
-def gerar_sugestoes_top15(perfil_id=1):
+def _compactar_evidencias(rows):
+    compacted = []
+    for row in rows:
+        try:
+            analysis = json.loads(row.get("resultado_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            analysis = {}
+        compacted.append({
+            "video_id": row["video_id"],
+            "titulo": row.get("titulo") or "",
+            "views": row.get("views") or 0,
+            "likes": row.get("likes") or 0,
+            "observacoes": [str(item)[:360] for item in (analysis.get("observacoes_comprovadas") or [])[:4]],
+            "trechos": [str(item)[:360] for item in (analysis.get("trechos_literais_relevantes") or [])[:4]],
+            "hipoteses": [str(item)[:360] for item in (analysis.get("hipoteses") or [])[:4]],
+        })
+    return compacted
+
+
+def gerar_sugestoes_top15(perfil_id=1, progress_callback=None):
+    if progress_callback:
+        progress_callback(10, "Carregando evidências da Autópsia", 5)
     rows = select_top15_analyzed_videos(perfil_id)
     if not rows:
         raise ValueError("Finalize a Autópsia dos Top 15 antes de gerar sugestões.")
-    material = json.dumps(rows, ensure_ascii=False)
+    if progress_callback:
+        progress_callback(25, f"Preparando {len(rows)} vídeos analisados", 4)
+    material = json.dumps(_compactar_evidencias(rows), ensure_ascii=False)
     prompt = f"""
 Gere de 3 a 5 sugestões de próximos vídeos baseadas SOMENTE nas análises reais dos Top 15 vídeos longos abaixo.
 NÃO use notícias, Radar, localização, RSS ou palavras isoladas. Cada sugestão deve citar somente video_ids
@@ -150,7 +176,15 @@ um número entre 0 e 10, nunca percentual ou escala 0-100. Retorne SOMENTE JSON 
 texto externo ou campos adicionais, conforme o schema. A origem de todas as pautas é autopsia_top15.
 DADOS: {material}
 """
-    response = _consultar_qwen(prompt, timeout=240, formato=SUGGESTION_SCHEMA, model="qwen2.5-coder:14b")
+    if progress_callback:
+        progress_callback(40, "IA analisando padrões e criando pautas", 180)
+    timeout = max(int(os.getenv("OPPORTUNITY_AI_TIMEOUT", "900")), 180)
+    try:
+        response = _consultar_qwen(prompt, timeout=timeout, formato=SUGGESTION_SCHEMA, model="qwen2.5:14b")
+    except (TimeoutError, socket.timeout) as error:
+        raise TimeoutError(f"Ollama excedeu o limite de {timeout}s ao gerar sugestões; tente novamente com o serviço disponível.") from error
+    if progress_callback:
+        progress_callback(78, "Validando evidências das sugestões", 25)
     try:
         payload = json.loads(response)
     except (TypeError, json.JSONDecodeError) as error:
@@ -179,4 +213,6 @@ DADOS: {material}
             "facilidade_gravacao": 6,
             "potencial_short": 7,
         }))
+    if progress_callback:
+        progress_callback(100, f"{len(created)} sugestões prontas", 0)
     return created

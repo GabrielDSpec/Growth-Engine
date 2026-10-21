@@ -16,13 +16,12 @@ CRITÉRIOS DE FILTRAGEM (VACA ROXA):
 - Promessa clara: O espectador entende o ganho/transformação em 1 segundo? [cite: 1]
 - Substância: O corte suporta o título sem clickbait mentiroso (mentir é crime/lixo; chamar atenção para algo real é estratégia) [cite: 1].
 
-REGRAS DE OURO PARA O TÍTULO:
-- Máximo de 55 caracteres.
-- Proibido clichê genérico de IA. Use tensão, conflito ou constatação seca.
-- Linguagem de quem fala na roda de amigos, não de release corporativo.
-- Preserve nomes próprios, marcas, eventos e números exatamente como aparecem no contexto; não invente grafias.
-- Nunca responda "N/A", "NA", "não informado" ou texto vazio.
-- A descrição deve ter 1 ou 2 frases diferentes, sem repetir a mesma frase ou expressão em sequência.
+REGRAS DE OURO PARA ALTO CTR E RETENÇÃO:
+- Título: Máximo de 55 caracteres. Proibido parecer uma manchete de jornal ou portal de notícias.
+- O título não deve entregar o final da história ou a resolução. Ele deve apresentar a ameaça, o risco, o desafio absurdo, a curiosidade ou a dor (ex: "Fiz X e quebrei a cara", "A pior rota pra Bertioga?").
+- Linguagem nativa da internet: Use o tom de voz coloquial e direto. É permitido usar elipses (...) e gírias de nicho. Proibido jargão corporativo ou clichês de IA (como "Descubra", "Neste vídeo", "A incrível jornada", "Acompanhe").
+- Descrição: escreva uma frase factual e neutra, baseada somente no trecho e nas entidades confirmadas. Não use suspense artificial, templates dramáticos, frases como "E tudo ia bem..." ou promessas sobre um final que não aparece no material.
+- Preserve nomes próprios e modelos técnicos exatamente como na transcrição original.
 
 TRANSCRIÇÃO / CONTEXTO DO CORTE:
 {contexto}
@@ -33,7 +32,8 @@ Analise internamente se o corte é uma Vaca Roxa. Se for, gere o JSON puro abaix
   "indice_remarkabilidade": "alta/media",
   "pilar": "NOME_DO_PILAR",
   "titulo": "...",
-    "descricao": "Descrição curta e fiel ao conteúdo, com contexto suficiente para o YouTube.",
+    "descricao": "Descrição curta, engajante e fiel ao conteúdo, em paráfrase e sem copiar a fala.",
+    "hashtags": ["#temaDoCorte", "#assuntoRelacionado"],
   "angulo_diferente": "ESCREVA AQUI O MOTIVO REAL DESTE CORTE SER REMARKÁVEL",
   "tags": ["tag1", "tag2", "tag3"]
 }}

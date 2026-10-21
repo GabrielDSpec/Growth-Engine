@@ -25,11 +25,21 @@ def init_db():
             canal_url TEXT NOT NULL DEFAULT '',
             canal_id TEXT,
             ativo INTEGER NOT NULL DEFAULT 1,
+            is_admin INTEGER NOT NULL DEFAULT 0,
             criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
         cursor.execute("INSERT OR IGNORE INTO perfis (id, nome, tipo) VALUES (1, 'Perfil Padrão', 'legacy')")
+        cursor.execute(
+            "UPDATE perfis SET nome='Aquele Cara de Bigode', tipo='legacy', atualizado_em=CURRENT_TIMESTAMP "
+            "WHERE id=1 AND nome='Perfil Padrão'"
+        )
+        try:
+            cursor.execute("ALTER TABLE perfis ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        cursor.execute("UPDATE perfis SET is_admin=1 WHERE id IN (1, 915361)")
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS videos_historico (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,6 +155,12 @@ def init_db():
             mensagem TEXT NOT NULL DEFAULT '',
             erro TEXT,
             resultado_json TEXT,
+            duracao_segundos REAL,
+            etapa TEXT NOT NULL DEFAULT 'queued',
+            item_atual INTEGER NOT NULL DEFAULT 0,
+            total_itens INTEGER NOT NULL DEFAULT 0,
+            tentativa INTEGER NOT NULL DEFAULT 0,
+            checkpoint_json TEXT NOT NULL DEFAULT '{}',
             criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             iniciado_em TIMESTAMP,
             atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -221,16 +237,41 @@ def init_db():
                 cursor.execute(f"ALTER TABLE videos_historico ADD COLUMN {coluna} {tipo}")
             except sqlite3.OperationalError:
                 pass
-        for coluna, tipo in (("video_titulo", "TEXT"), ("nome_rodada", "TEXT"), ("numero_rodada", "INTEGER"), ("selecionado", "INTEGER NOT NULL DEFAULT 0"), ("motivo_rejeicao", "TEXT"), ("montagem_json", "TEXT NOT NULL DEFAULT ''"), ("horario_recomendado_json", "TEXT NOT NULL DEFAULT '{}'")):
+        try:
+            cursor.execute("ALTER TABLE tarefas_jobs ADD COLUMN duracao_segundos REAL")
+        except sqlite3.OperationalError:
+            pass
+        for coluna, tipo in (("etapa", "TEXT NOT NULL DEFAULT 'queued'"), ("item_atual", "INTEGER NOT NULL DEFAULT 0"), ("total_itens", "INTEGER NOT NULL DEFAULT 0"), ("tentativa", "INTEGER NOT NULL DEFAULT 0"), ("checkpoint_json", "TEXT NOT NULL DEFAULT '{}'")):
+            try:
+                cursor.execute(f"ALTER TABLE tarefas_jobs ADD COLUMN {coluna} {tipo}")
+            except sqlite3.OperationalError:
+                pass
+        cursor.execute("""
+            UPDATE tarefas_jobs
+            SET duracao_segundos=ROUND((julianday(concluido_em) - julianday(COALESCE(iniciado_em, criado_em))) * 86400, 3)
+            WHERE duracao_segundos IS NULL AND concluido_em IS NOT NULL
+        """)
+        for coluna, tipo in (("video_titulo", "TEXT"), ("descricao_publicacao", "TEXT NOT NULL DEFAULT ''"), ("nome_rodada", "TEXT"), ("numero_rodada", "INTEGER"), ("selecionado", "INTEGER NOT NULL DEFAULT 0"), ("motivo_rejeicao", "TEXT"), ("montagem_json", "TEXT NOT NULL DEFAULT ''"), ("horario_recomendado_json", "TEXT NOT NULL DEFAULT '{}'")):
             try:
                 cursor.execute(f"ALTER TABLE cortes_gerados ADD COLUMN {coluna} {tipo}")
             except sqlite3.OperationalError:
                 pass
-        for coluna, tipo in (("google_account_email", "TEXT"), ("avatar_url", "TEXT")):
+        for coluna, tipo in (("google_account_email", "TEXT"), ("avatar_url", "TEXT"), ("inscritos", "INTEGER"), ("views_canal", "INTEGER"), ("videos_canal", "INTEGER")):
             try:
                 cursor.execute(f"ALTER TABLE perfis_google ADD COLUMN {coluna} {tipo}")
             except sqlite3.OperationalError:
                 pass
+        for coluna, tipo in (("related_video_id", "TEXT"), ("related_video_title", "TEXT"), ("related_video_status", "TEXT NOT NULL DEFAULT 'pendente'"), ("related_video_error", "TEXT"), ("related_video_updated_at", "TIMESTAMP")):
+            try:
+                cursor.execute(f"ALTER TABLE cortes_gerados ADD COLUMN {coluna} {tipo}")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                cursor.execute(f"ALTER TABLE videos_historico ADD COLUMN {coluna} {tipo}")
+            except sqlite3.OperationalError:
+                pass
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_perfis_google_account_email ON perfis_google (google_account_email) WHERE google_account_email IS NOT NULL AND google_account_email <> ''")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_perfis_google_account_id ON perfis_google (google_account_id) WHERE google_account_id IS NOT NULL AND google_account_id <> ''")
         for tabela in ("videos_historico", "oportunidades_conteudo", "cortes_gerados", "analises_conteudo", "tarefas_processamento", "tarefas_jobs", "perfis_conteudo", "classificacoes_conteudo", "falhas_classificacao_conteudo", "preferencias_usuario", "notificacoes", "perfis_google"):
             try:
                 cursor.execute(f"ALTER TABLE {tabela} ADD COLUMN perfil_id INTEGER NOT NULL DEFAULT 1 REFERENCES perfis(id)")
@@ -270,6 +311,16 @@ def salvar_perfil_google(nome, canal_url, canal_id, canal_nome, google_account_i
     init_db()
     conn = get_connection()
     try:
+        duplicate = conn.execute("""
+            SELECT perfil_id FROM perfis_google
+            WHERE perfil_id <> ? AND (
+                (? <> '' AND google_account_email = ?)
+                OR (? <> '' AND google_account_id = ?)
+            )
+            LIMIT 1
+        """, (perfil_id, google_account_email or "", google_account_email or "", google_account_id or "", google_account_id or "")).fetchone()
+        if duplicate:
+            raise ValueError(f"Esta conta Google já está adicionada ao perfil {duplicate['perfil_id']}.")
         conn.execute("""
             INSERT INTO perfis_google (
                 perfil_id, nome, canal_url, canal_id, canal_nome, google_account_id, google_account_email, avatar_url, scopes,
@@ -285,7 +336,7 @@ def salvar_perfil_google(nome, canal_url, canal_id, canal_nome, google_account_i
                 avatar_url=excluded.avatar_url,
                 scopes=excluded.scopes,
                 access_token_ciphertext=excluded.access_token_ciphertext,
-                refresh_token_ciphertext=excluded.refresh_token_ciphertext,
+                refresh_token_ciphertext=COALESCE(excluded.refresh_token_ciphertext, perfis_google.refresh_token_ciphertext),
                 token_expira_em=excluded.token_expira_em,
                 fuso_horario=excluded.fuso_horario,
                 status='conectado',

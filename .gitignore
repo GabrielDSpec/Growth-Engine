@@ -26,8 +26,21 @@ temp_*
 diagnostic_audio.wav
 diagnostic_audio.srt
 erros.log
+server_restart.log
+server_restart.err
+server_validation.log
+server_validation.err
 
 # Executaveis, bibliotecas locais e modelos de IA
 *.exe
 *.dll
 *.bin
+
+# Builds e artefatos de empacotamento local
+build/
+dist/
+*.spec
+
+# Ambientes e logs locais de desenvolvimento
+.venv/
+*.log

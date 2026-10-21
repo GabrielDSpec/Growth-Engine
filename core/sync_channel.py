@@ -11,16 +11,17 @@ def _youtube_api_client(perfil_id=1):
     conn = get_connection()
     try:
         profile = conn.execute(
-            "SELECT refresh_token_ciphertext, canal_id FROM perfis_google WHERE perfil_id=? AND status = 'conectado' ORDER BY atualizado_em DESC LIMIT 1",
+            "SELECT access_token_ciphertext, refresh_token_ciphertext, canal_id FROM perfis_google WHERE perfil_id=? AND status = 'conectado' ORDER BY atualizado_em DESC LIMIT 1",
             (perfil_id,),
         ).fetchone()
     finally:
         conn.close()
     if not profile or not profile["refresh_token_ciphertext"]:
         return None
+    access_token = decifrar_token(profile["access_token_ciphertext"]) if profile["access_token_ciphertext"] else None
     refresh_token = decifrar_token(profile["refresh_token_ciphertext"])
     credentials = Credentials(
-        token=None,
+        token=access_token,
         refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
         client_id=GOOGLE_CLIENT_ID,
@@ -82,6 +83,33 @@ def _fetch_api_entries(youtube_api, channel_id, existing_ids=None, pending_ids=N
     return entries
 
 
+def _refresh_channel_metrics(youtube_api, channel_id, perfil_id):
+    response = youtube_api.channels().list(part="statistics", id=channel_id).execute()
+    items = response.get("items", [])
+    if not items:
+        return
+    statistics = items[0].get("statistics", {})
+    conn = get_connection()
+    try:
+        current = conn.execute(
+            "SELECT inscritos, views_canal, videos_canal FROM perfis_google WHERE perfil_id=? AND canal_id=?",
+            (perfil_id, channel_id),
+        ).fetchone()
+        if not current:
+            return
+        values = [
+            int(statistics[key]) if key in statistics else current[index]
+            for index, key in enumerate(("subscriberCount", "viewCount", "videoCount"))
+        ]
+        conn.execute(
+            "UPDATE perfis_google SET inscritos=?, views_canal=?, videos_canal=?, atualizado_em=CURRENT_TIMESTAMP WHERE perfil_id=? AND canal_id=?",
+            (*values, perfil_id, channel_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _duration_seconds(value):
     if not value:
         return None
@@ -131,6 +159,11 @@ def sincronizar_canal_youtube(channel_base_url: str, perfil_id=1, progress_callb
     channel_id = None
     try:
         youtube_api, channel_id = _youtube_api_client(perfil_id)
+        if youtube_api and channel_id:
+            try:
+                _refresh_channel_metrics(youtube_api, channel_id, perfil_id)
+            except Exception as error:
+                print(f"⚠️ Não foi possível atualizar métricas do canal: {error}")
     except Exception as error:
         print(f"⚠️ API YouTube indisponível; usando descoberta alternativa: {error}")
     
@@ -162,8 +195,17 @@ def sincronizar_canal_youtube(channel_base_url: str, perfil_id=1, progress_callb
                     result = ydl.extract_info(url_alvo, download=False)
                     entries = result.get('entries', []) or []
             except Exception as e:
-                print(f"⚠️ Erro ao varrer {url_alvo}: {e}")
-                continue
+                if youtube_api and channel_id:
+                    print(f"⚠️ API do YouTube indisponível em {url_alvo}: {e}; tentando descoberta pública.")
+                    try:
+                        result = ydl.extract_info(url_alvo, download=False)
+                        entries = result.get('entries', []) or []
+                    except Exception as fallback_error:
+                        print(f"⚠️ Erro ao varrer {url_alvo}: {fallback_error}")
+                        continue
+                else:
+                    print(f"⚠️ Erro ao varrer {url_alvo}: {e}")
+                    continue
             total_entries += len(entries)
             if progress_callback:
                 progress_callback(processed_entries, total_entries, f"Encontrados {total_entries} vídeos")
@@ -244,3 +286,4 @@ def sincronizar_canal_youtube(channel_base_url: str, perfil_id=1, progress_callb
     conn.commit()
     conn.close()
     print(f"✅ Sincronização concluída! {sincronizados} total processados ({shorts_count} shorts, {videos_count} vídeos longos).")
+    return {"processed": sincronizados, "shorts": shorts_count, "videos": videos_count, "profile_id": perfil_id}

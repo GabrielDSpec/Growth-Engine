@@ -10,6 +10,7 @@ Permitir que a Central de cortes interrompa transcrições e renderizações lon
 - Workers de upload, transcrição, análise e renderização verificam o cancelamento.
 - DirectCompute AMD usa processo monitorado e encerrável.
 - Central de cortes exibe o botão de cancelamento, mantém o polling durante `cancelling` e só libera a nova geração quando o job chega a um estado terminal.
+- Retomadas `interrupted` podem ser descartadas pela API, e a Central remove estados terminais persistidos no navegador para não reapresentar jobs antigos como ativos após reinício.
 
 ## Validação
 

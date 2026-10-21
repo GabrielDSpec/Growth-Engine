@@ -11,19 +11,25 @@
 - A rota de mídia suporta `Range`/`206 Partial Content`, permitindo reprodução e avanço no player HTML5.
 - Scores zerados de candidatos antigos são recalculados na API com sinais observáveis da transcrição.
 - A Central organiza os cortes em menus por vídeo original e, dentro dele, por ciclo de análise identificado pelo job da sessão.
+- A deduplicação visual continua removendo títulos e intervalos repetidos, e cada nova geração recebe os intervalos dos ciclos anteriores para buscar material diferente antes da persistência, inclusive quando o fallback é acionado por timeout do Ollama.
+- Cada lote editorial usa uma requisição stateless ao Ollama: o payload é recriado, `context` é enviado como lista vazia e nenhum histórico de resposta é reaproveitado entre lotes.
+- O fallback de título local é genérico e baseado exclusivamente na evidência do candidato; catálogos temáticos e regexs que poderiam introduzir assuntos de outros vídeos não são usados.
 - O título solicitado à IA é uma manchete de YouTube específica, completa e engajante, baseada literalmente no conteúdo do corte.
 - A prévia do vídeo usa proporção vertical 9:16, com título acima, arquivo fonte abaixo e score numérico colorido sobre o canto superior esquerdo.
-- A revisão abre em modal com fundo escurecido e blur; as ações Editar e Excluir ficam ao lado do player. Renderizar só aparece enquanto o MP4 ainda não existe; depois disso o card oferece Baixar MP4 e Agendar postagem.
+- A revisão abre em modal com fundo escurecido e blur; `Editar título` permite alterar o título e a descrição que serão enviados ao YouTube. Renderizar só aparece enquanto o MP4 ainda não existe; depois disso o card oferece Baixar MP4 e Agendar postagem.
 - A interface permite excluir um ciclo inteiro, marcando seus cortes como excluídos e removendo os MP4s gerados.
 - A validação semântica rejeita limites no meio de frases e amplia segmentos Whisper até o encerramento da frase, dentro da duração máxima.
 - O contrato da Qwen sinaliza a oportunidade editorial `gancho_contexto_retorno`, sem inventar falas ou timestamps.
 - A montagem composta é persistida em `montagem_json` e o FFmpeg concatena gancho, contexto e destaque; cortes legados usam o intervalo contínuo.
 - A Qwen recebe o título original do vídeo, confere coerência com a transcrição e pode corrigir ortografia, nomes e entidades somente quando há evidência no contexto.
+- Títulos genéricos ou conversacionais, como "A gente", não passam como manchete editorial; o fallback usa gancho, promessa, virada e conclusão para manter relação semântica com o corte.
 - O ciclo oferece `Selecionar todos` e `Agendar ciclo`; a Central também oferece `Agendar selecionados` com uma única data e horário.
 - A hierarquia visual mostra `Cortes gerados` por vídeo e ciclos como `Ciclo 1`, `Ciclo 2` etc.; cada ciclo é um acordeão recolhido por padrão e expande somente os cortes daquele ciclo.
 - A seleção individual usa um botão curto e alternável: ícone de círculo + `Postar` quando livre e círculo com check verde + `Selecionado` quando ativo, com tooltip e estado `aria-pressed`; a troca atualiza apenas o botão e mantém o ciclo aberto.
 - Quando existe seleção, a Central exibe uma barra contextual com a quantidade escolhida e as ações `Renderizar selecionados`, `Postar selecionados`, `Agendar selecionados` e `Excluir selecionados`.
-- `Postar selecionados` usa os melhores slots futuros automaticamente; `Agendar selecionados` permite informar data e horário; ambas as ações exigem MP4 renderizado. A exclusão em lote pede uma única confirmação e respeita o perfil atual.
+- `Postar selecionados` publica imediatamente em uma fila sequencial, um corte por vez; `Agendar selecionados` permite informar data e horário ou usar recomendação futura. Ambas as ações exigem MP4 renderizado. A exclusão em lote pede uma única confirmação e respeita o perfil atual.
+- A descrição exibida abaixo do título do card é a descrição de publicação persistida para o YouTube; enquanto vazia, a interface informa que ela ainda não foi definida.
+- A descrição de publicação é gerada antes da revisão e fica em um bloco expansível para leitura integral. Ela não é o texto falado do corte: é uma paráfrase editorial revisada, fiel ao conteúdo, com palavras-chave e hashtags relacionadas.
 
 **Status:** em implementacao
 **Progresso:** 95%
@@ -88,3 +94,9 @@ Cada rodada deve manter `perfil_id`, `video_id`, `video_titulo`, `job_id`, `nume
 - [x] Ações dos selecionados aparecem na mesma faixa de `Selecionar todos`, `Agendar ciclo` e `Excluir ciclo`.
 - [x] `Selecionar todos` atualiza os botões e a contagem sem reconstruir a tela nem fechar o ciclo aberto.
 - [x] Cards já renderizados não exibem a ação redundante `Renderizar`; cards sem MP4 continuam oferecendo a ação.
+- [x] Editar título e descrição de publicação por corte, normalizando marcadores Markdown e refletindo o retorno persistido em todas as fontes de estado da Central.
+- [x] Postar selecionados imediatamente em fila sequencial com progresso persistido.
+- [x] Gerar e salvar a descrição editorial antes de exibir o corte como pronto para publicação.
+- [x] Tornar a descrição do YouTube expansível no card.
+- [x] Exibir a quantidade real de cortes em revisão na Visão geral e atualizá-la automaticamente.
+- [ ] Definir o significado de produto de `Ciclo 1` antes de criar filtros ou automações dependentes do ciclo.

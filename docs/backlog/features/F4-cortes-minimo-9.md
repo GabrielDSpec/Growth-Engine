@@ -98,6 +98,14 @@ Nenhum log deve conter token OAuth ou segredo.
 
 ## Estado da implementacao
 
+- [x] Saída UTF-8 do cutter: logs com emojis não derrubam a geração em consoles Windows configurados com `charmap`; caracteres não suportados são substituídos apenas na saída.
+- [x] Fallback editorial definitivo: ausência, invalidade ou erro no resumo da IA não descarta um MP4 já renderizado; o corte recebe descrição estruturada com título, trecho de até 20 palavras da transcrição e `#shorts #podcast #cortes`.
+- [x] Force Generate sem clones: não há mais deslocamentos artificiais nem bypass final; janelas com mais de 40% de sobreposição ou título exato/similar são descartadas contra o banco e o ciclo atual, com degradação graciosa para menos de 9 cortes.
+- [x] Estados inativos não bloqueiam regeneração: cortes `excluido`, `falhou` e `cancelado` ficam fora da lista de intervalos usados, permitindo gerar novos cortes após uma rodada descartada.
+- [x] Smart crop facial: o enquadramento vertical analisa frames em 0%, 25%, 50%, 75% e 100%, reduz a escala mínima para faces pequenas de planos abertos e usa a maior face detectada; sem detecção, posiciona o crop no terço superior.
+- [x] Fallback sem rosto com fundo desfocado: quando não há coordenada facial válida, o render usa `filter_complex` com fundo preenchido e desfocado, vídeo original centralizado e saída `[outv]` mapeada para preservar os encoders AMF/CPU.
+- [x] Filtro blur otimizado: a entrada é dividida uma vez, o fundo recebe blur em 540x960 e só depois volta a 1080x1920, evitando aplicar o blur pesado em resolução cheia.
+- [x] Contexto multimodal leve: `core/vision_tools.py` analisa `showinfo` e `astats` uma vez por job, associa `[🎬 CORTE DE CÂMERA]` e `[🔊 PICO DE ÁUDIO]` aos segmentos e passa somente tags semânticas ao prompt; scores do detector não são expostos à IA e falhas do FFmpeg usam fallback textual.
 - [x] Retry finito de ate tres chamadas da Qwen.
 - [x] Meta de nove cortes e deduplicacao por intervalo.
 - [x] Estado `needs_review` com diagnostico em `tarefas_jobs.resultado_json`.
@@ -106,10 +114,9 @@ Nenhum log deve conter token OAuth ou segredo.
 - [x] Frontend exibe `needs_review`, quantidade encontrada e rodadas do diagnóstico.
 - [ ] Diagnostico individual de cada regra rejeitada.
 - [ ] Persistir payload bruto completo de cada rodada.
-- [x] Exibir `needs_review` e resumo das rodadas no frontend.
-- [ ] Persistir todos os candidatos estruturalmente validos para curadoria manual.
+- [x] Persistir todos os candidatos estruturalmente validos para curadoria manual, incluindo os omitidos pela IA com `status_editorial=bruto`.
 - [ ] Renderizar somente candidatos selecionados explicitamente pelo usuario.
 
 ## Proxima implementacao recomendada
 
-Extrair a validacao para retornar `accepted` e `rejected_reasons`, persistir a transcricao e o diagnostico por rodada, e implementar a curadoria manual em [`F4-curadoria-manual-candidatos.md`](F4-curadoria-manual-candidatos.md).
+Extrair a validacao para retornar `accepted` e `rejected_reasons`, persistir a transcricao e o diagnostico por rodada, e implementar a curadoria manual em [`F4-curadoria-manual-candidatos.md`](F4-curadoria-manual-candidatos.md). A resposta editorial parcial agora faz merge por indice ou timestamps: itens retornados recebem `status_editorial=enriquecido` e itens omitidos sao resgatados como `status_editorial=bruto`.

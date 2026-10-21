@@ -1,14 +1,31 @@
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 
 from core.config import DIRETORIO_PROJETO
+from core.utils import registrar_log
 
 
 class MediaToolError(RuntimeError):
     pass
+
+
+def arquivo_media_valido(caminho):
+    try:
+        return bool(caminho) and os.path.isfile(caminho) and os.path.getsize(caminho) > 0
+    except OSError:
+        return False
+
+
+def nome_seguro_arquivo(nome, fallback="corte", limite=100):
+    """Remove caracteres que impedem a criação de arquivos no Windows."""
+    valor = re.sub(r"[<>:\"/\\|?*\x00-\x1f]", " ", str(nome or ""))
+    valor = re.sub(r"\s+", " ", valor).strip(" .")
+    return valor[:limite].rstrip(" .") or fallback
 
 
 def _resolve_tool(name):
@@ -26,7 +43,7 @@ def localizar_ferramentas():
 
 def _run(command, timeout):
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False)
     except subprocess.TimeoutExpired as error:
         raise MediaToolError(f"Processo excedeu o timeout de {timeout}s.") from error
     if result.returncode != 0:
@@ -61,7 +78,85 @@ def _filtro_vertical(caminho_origem, inicio, fim):
         from core.cutter import calcular_corte_com_rosto
         return calcular_corte_com_rosto(caminho_origem, inicio, fim)
     except Exception:
-        return "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920:flags=lanczos"
+        return "crop=ih*9/16:ih:(iw-ih*9/16)/2:0"
+
+
+def _opcoes_encoder_cpu():
+    return ["-c:v", "libx264", "-preset", "faster", "-crf", "20", "-pix_fmt", "yuv420p"]
+
+
+def _opcoes_encoder_amf():
+    return ["-c:v", "h264_amf", "-quality", "quality", "-rc", "vbr_peak", "-pix_fmt", "yuv420p"]
+
+
+@lru_cache(maxsize=4)
+def _encoders_disponiveis(ffmpeg):
+    try:
+        resultado = _run([ffmpeg, "-hide_banner", "-encoders"], 15)
+    except MediaToolError:
+        return ""
+    return f"{resultado.stdout}\n{resultado.stderr}".lower()
+
+
+def obter_opcoes_encoder(ffmpeg, encoder=None):
+    """Seleciona AMF quando disponível e mantém x264 como fallback explícito."""
+    preferencia = (encoder or os.getenv("SHORTS_ENCODER", "auto")).strip().lower()
+    if preferencia in {"libx264", "cpu"}:
+        return {"name": "libx264", "args": _opcoes_encoder_cpu()}
+    if preferencia in {"h264_amf", "amf", "auto"} and "h264_amf" in _encoders_disponiveis(ffmpeg):
+        return {"name": "h264_amf", "args": _opcoes_encoder_amf()}
+    if preferencia not in {"auto", "amf", "h264_amf", "libx264", "cpu"}:
+        raise MediaToolError(f"Encoder de vídeo não suportado: {preferencia}")
+    return {"name": "libx264", "args": _opcoes_encoder_cpu()}
+
+
+def _falha_encoder_hardware(error):
+    mensagem = str(error).lower()
+    marcadores = (
+        "h264_amf", "amf", "d3d", "device", "hardware", "encoder not found",
+        "cannot load", "not supported", "no capable", "initialization",
+    )
+    return any(marcador in mensagem for marcador in marcadores)
+
+
+def montar_comando_render(ffmpeg, caminho_origem, caminho_saida, inicio_render, fim_render, filtro=None, encoder=None):
+    duracao_render = max(0.001, float(fim_render) - float(inicio_render))
+    opcoes_encoder = obter_opcoes_encoder(ffmpeg, encoder)
+    comando = [
+        ffmpeg, "-y", "-i", caminho_origem, "-ss", f"{float(inicio_render):.3f}",
+        "-t", f"{duracao_render:.3f}",
+    ]
+    usa_filtro_complexo = str(filtro or "").startswith("filter_complex:")
+    if filtro:
+        if usa_filtro_complexo:
+            comando.extend(["-filter_complex", str(filtro)[len("filter_complex:"):]])
+        else:
+            filtro_base = str(filtro).split(",scale=", 1)[0]
+            filtro_final = f"{filtro_base},scale=1080:1920:flags=bicubic,format=yuv420p"
+            comando.extend(["-vf", filtro_final])
+    comando.extend([
+        "-avoid_negative_ts", "make_zero",
+        "-map", "[outv]" if usa_filtro_complexo else "0:v:0", "-map", "0:a?",
+        *opcoes_encoder["args"],
+        "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", caminho_saida,
+    ])
+    return comando
+
+
+def _executar_render_com_fallback(ffmpeg, caminho_origem, caminho_saida, inicio_render, fim_render, filtro, timeout):
+    comando = montar_comando_render(ffmpeg, caminho_origem, caminho_saida, inicio_render, fim_render, filtro)
+    try:
+        _run(comando, timeout)
+    except MediaToolError as error:
+        if "h264_amf" not in comando or not _falha_encoder_hardware(error):
+            raise
+        registrar_log(f"Falha no AMF, caindo para CPU: {error}")
+        if os.path.exists(caminho_saida):
+            os.remove(caminho_saida)
+        comando_cpu = montar_comando_render(
+            ffmpeg, caminho_origem, caminho_saida, inicio_render, fim_render, filtro, encoder="libx264"
+        )
+        _run(comando_cpu, timeout)
 
 
 def renderizar_corte(caminho_origem, caminho_saida, inicio, fim, filtro=None, timeout=600, intervalos=None, vertical=False):
@@ -83,32 +178,26 @@ def renderizar_corte(caminho_origem, caminho_saida, inicio, fim, filtro=None, ti
             partes = []
             for indice, (trecho_inicio, trecho_fim) in enumerate(normalizados):
                 parte = os.path.join(pasta_temporaria, f"parte-{indice}.mp4")
-                comando_parte = [ffmpeg, "-y", "-ss", f"{trecho_inicio:.3f}", "-to", f"{trecho_fim:.3f}", "-i", caminho_origem]
                 filtro_parte = _filtro_vertical(caminho_origem, trecho_inicio, trecho_fim) if vertical else filtro
-                if filtro_parte:
-                    comando_parte.extend(["-vf", filtro_parte])
-                comando_parte.extend(["-map", "0:v:0", "-map", "0:a?", "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", parte])
-                _run(comando_parte, timeout)
+                _executar_render_com_fallback(
+                    ffmpeg, caminho_origem, parte, trecho_inicio, trecho_fim, filtro_parte, timeout
+                )
                 partes.append(parte)
             lista = os.path.join(pasta_temporaria, "concat.txt")
             with open(lista, "w", encoding="utf-8") as arquivo:
                 for parte in partes:
                     arquivo.write(f"file '{parte.replace(chr(92), '/')}'\n")
             _run([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", lista, "-c", "copy", caminho_saida], timeout)
-        if not os.path.isfile(caminho_saida) or os.path.getsize(caminho_saida) <= 0:
+        if not arquivo_media_valido(caminho_saida):
             raise MediaToolError("FFmpeg não produziu um arquivo composto válido.")
         return caminho_saida
-    command = [ffmpeg, "-y", "-ss", str(inicio), "-to", str(fim), "-i", caminho_origem]
     filtro_final = _filtro_vertical(caminho_origem, float(inicio), float(fim)) if vertical else filtro
-    if filtro_final:
-        command.extend(["-vf", filtro_final])
-    command.extend(["-map", "0:v:0", "-map", "0:a?", "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", caminho_saida])
     try:
-        _run(command, timeout)
+        _executar_render_com_fallback(ffmpeg, caminho_origem, caminho_saida, inicio, fim, filtro_final, timeout)
     except Exception:
         if os.path.exists(caminho_saida):
             os.remove(caminho_saida)
         raise
-    if not os.path.isfile(caminho_saida) or os.path.getsize(caminho_saida) <= 0:
+    if not arquivo_media_valido(caminho_saida):
         raise MediaToolError("FFmpeg não produziu um arquivo final válido.")
     return caminho_saida

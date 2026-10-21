@@ -87,6 +87,12 @@ Esta tarefa foi registrada antes da implementacao. Nenhum servidor deve ser rein
 - [x] Integrar DirectCompute no `core/transcriber.py` com saida SRT segmentada e telemetria de backend/GPU.
 - [x] Exibir progresso contínuo com timestamp de áudio, duração original, velocidade e ETA; usar estimativa explícita quando o SRT ainda não tiver timestamp.
 - [x] Persistir SRT em `media/<perfil_id>/transcripts/<sha256>.srt` e reutilizar o cache antes de iniciar nova transcrição.
+- [x] Persistir a causa detalhada quando download, arquivo local, Whisper ou transcrição vazia impedem a conclusão do job.
+- [x] Watchdog específico para finalização do SRT DirectCompute, configurável por `WHISPER_DIRECTCOMPUTE_FINALIZATION_TIMEOUT` e separado do timeout global de transcrição.
+- [x] O estado de finalização AMD só é emitido quando o SRT fornece timestamp real no fim do áudio; a estimativa de progresso não inicia o watchdog.
+- [x] DirectCompute usa 8 threads por padrão, configuráveis por `WHISPER_DIRECTCOMPUTE_THREADS`, com a configuração exposta no progresso persistido.
+- [x] Recuperação de startup encerra processos `constme.exe` órfãos antes de retomar transcrições interrompidas.
+- [x] DirectCompute gera SRT com timestamps no diretório temporário da execução; a chamada não usa mais `--no-timestamps`.
 - [x] Persistir a origem e o hash do arquivo para validar a reutilização da transcrição.
 - [ ] Validar execucao real com o arquivo completo e avaliar upgrade do modelo GGML para `large-v3`.
 - [ ] Medir benchmark do video de 316 MB em GPU e CPU.

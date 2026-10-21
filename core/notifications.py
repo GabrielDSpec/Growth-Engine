@@ -1,6 +1,7 @@
 from core.notification_repository import (
     delete_read_notifications,
     insert_notification,
+    mark_all_notifications_read,
     mark_notification_read,
     select_notifications,
 )
@@ -18,5 +19,9 @@ def marcar_notificacao_lida(notification_id, perfil_id=1):
     mark_notification_read(notification_id, perfil_id)
 
 
+def marcar_todas_notificacoes_lidas(perfil_id=1):
+    return mark_all_notifications_read(perfil_id)
+
+
 def limpar_notificacoes_lidas(perfil_id=1):
-    delete_read_notifications(perfil_id)
+    return delete_read_notifications(perfil_id)

@@ -84,6 +84,25 @@ def select_analysis_status(perfil_id=1):
         total = conn.execute("SELECT COUNT(*) FROM videos_historico WHERE tipo='video' AND perfil_id=?", (perfil_id,)).fetchone()[0]
         concluidas = conn.execute("SELECT COUNT(*) FROM analises_conteudo WHERE status='concluida' AND perfil_id=?", (perfil_id,)).fetchone()[0]
         processando = conn.execute("SELECT COUNT(*) FROM analises_conteudo WHERE status='processando' AND perfil_id=?", (perfil_id,)).fetchone()[0]
-        return {"total": total, "concluidas": concluidas, "pendentes": max(total - concluidas, 0), "processando": processando}
+        processing_rows = conn.execute("SELECT video_id FROM analises_conteudo WHERE status='processando' AND perfil_id=?", (perfil_id,)).fetchall()
+        return {
+            "total": total,
+            "concluidas": concluidas,
+            "pendentes": max(total - concluidas, 0),
+            "processando": processando,
+            "processing_video_ids": [row["video_id"] for row in processing_rows],
+        }
+    finally:
+        conn.close()
+
+
+def recover_stale_processing():
+    init_db()
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE analises_conteudo SET status='pendente', erro=NULL, atualizado_em=CURRENT_TIMESTAMP WHERE status='processando'"
+        )
+        conn.commit()
     finally:
         conn.close()

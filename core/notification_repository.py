@@ -42,12 +42,25 @@ def mark_notification_read(notification_id, perfil_id=1):
         conn.close()
 
 
+def mark_all_notifications_read(perfil_id=1):
+    perfil_id = normalize_profile_id(perfil_id)
+    init_db()
+    conn = get_connection()
+    try:
+        cursor = conn.execute("UPDATE notificacoes SET lida=1 WHERE perfil_id=? AND lida=0", (perfil_id,))
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        conn.close()
+
+
 def delete_read_notifications(perfil_id=1):
     perfil_id = normalize_profile_id(perfil_id)
     init_db()
     conn = get_connection()
     try:
-        conn.execute("DELETE FROM notificacoes WHERE perfil_id=? AND lida=1", (perfil_id,))
+        cursor = conn.execute("DELETE FROM notificacoes WHERE perfil_id=? AND lida=1", (perfil_id,))
         conn.commit()
+        return cursor.rowcount
     finally:
         conn.close()

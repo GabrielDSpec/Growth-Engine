@@ -9,20 +9,20 @@ from core.app_secrets import SECRETS_PATH, carregar_segredos_no_ambiente
 
 def main():
     carregar_segredos_no_ambiente()
+    os.environ.setdefault("GROWTH_ENGINE_ENABLE_OLLAMA_CUTS", "1")
     if not SECRETS_PATH.exists():
         raise SystemExit("Arquivo config.secrets não encontrado. Execute configurar_segredos.py uma vez.")
 
     from core.job_repository import list_active_jobs
+    from core.content_analysis_repository import recover_stale_processing
     active_jobs = list_active_jobs()
     if active_jobs:
         print("ATENÇÃO: existem tarefas pesadas em execução ou na fila:")
         for job in active_jobs:
             print(f"- perfil={job['perfil_id']} tipo={job['tipo']} progresso={job['progresso']}% job={job['job_id']}")
-        if not sys.stdin.isatty():
-            raise SystemExit("Servidor não iniciado para evitar interromper tarefas ativas.")
-        confirmation = input("Digite CONTINUAR para reiniciar e interromper essas tarefas: ").strip()
-        if confirmation != "CONTINUAR":
-            raise SystemExit("Inicialização cancelada; tarefas preservadas.")
+        print("Inicialização: tarefas antigas serão recuperadas como interrompidas.")
+
+    recover_stale_processing()
 
     from core.web_server import start_server
 

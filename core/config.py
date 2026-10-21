@@ -29,6 +29,7 @@ def obter_pastas_midia(perfil_id):
         "shorts": os.path.join(raiz, "shorts"),
         "downloads": os.path.join(raiz, "downloads"),
         "transcripts": os.path.join(raiz, "transcripts"),
+        "editorial_dossiers": os.path.join(raiz, "editorial_dossiers"),
     }
     for pasta in pastas.values():
         os.makedirs(pasta, exist_ok=True)
