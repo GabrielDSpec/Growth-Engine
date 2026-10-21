@@ -1,5 +1,7 @@
 # Growth Engine
 
+[English README](README.en.md)
+
 Plataforma local de inteligência editorial e produção de conteúdo para canais do YouTube.
 
 O Growth Engine transforma histórico do canal, métricas, transcrições e contexto externo em decisões editoriais rastreáveis: identifica padrões, encontra oportunidades, seleciona momentos para Shorts, renderiza cortes verticais e prepara a distribuição com revisão humana e estados persistentes.
