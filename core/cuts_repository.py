@@ -1,5 +1,6 @@
 import json
 import os
+import re
 
 from core.database import get_connection, init_db
 from core.tenant import normalize_profile_id
@@ -90,17 +91,112 @@ def update_cut_metadata(cut_id, title, description, perfil_id=1):
         conn.close()
 
 
-def update_cut_related_video(cut_id, video_id, video_title, perfil_id=1):
+def save_cut_caption_transcript(cut_id, segments, perfil_id=1):
     perfil_id = normalize_profile_id(perfil_id)
     init_db()
     conn = get_connection()
     try:
+        cut = conn.execute("SELECT id FROM cortes_gerados WHERE id=? AND perfil_id=?", (cut_id, perfil_id)).fetchone()
+        if not cut:
+            raise ValueError('Corte não encontrado.')
+        conn.execute("DELETE FROM cortes_transcricao_editada WHERE cut_id=? AND perfil_id=?", (cut_id, perfil_id))
+        conn.executemany("""
+            INSERT INTO cortes_transcricao_editada
+            (perfil_id, cut_id, segmento_indice, inicio, fim, texto, atualizado_em)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, [(perfil_id, cut_id, int(segment['indice']), float(segment['inicio']), float(segment['fim']), str(segment['texto']).strip()) for segment in segments])
+        conn.commit()
+        return len(segments)
+    finally:
+        conn.close()
+
+
+def list_cut_caption_transcript(cut_id, perfil_id=1):
+    perfil_id = normalize_profile_id(perfil_id)
+    init_db()
+    conn = get_connection()
+    try:
+        return [dict(row) for row in conn.execute("""
+            SELECT segmento_indice AS indice, inicio, fim, texto
+            FROM cortes_transcricao_editada
+            WHERE cut_id=? AND perfil_id=? ORDER BY inicio, segmento_indice
+        """, (cut_id, perfil_id)).fetchall()]
+    finally:
+        conn.close()
+
+
+def replace_cut_cycle_metadata(job_id, source, replacement, perfil_id=1):
+    perfil_id = normalize_profile_id(perfil_id)
+    source = str(source or '').strip()
+    replacement = str(replacement or '').strip()
+    if not source:
+        raise ValueError('Informe a palavra ou expressão que será substituída.')
+    if source.casefold() == replacement.casefold():
+        raise ValueError('A palavra nova precisa ser diferente da palavra atual.')
+    pattern = re.compile(rf'(?<!\w){re.escape(source)}(?!\w)', re.IGNORECASE)
+    init_db()
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, titulo, descricao_publicacao FROM cortes_gerados WHERE job_id=? AND perfil_id=?",
+            (job_id, perfil_id),
+        ).fetchall()
+        if not rows:
+            raise ValueError('Ciclo de cortes não encontrado para este perfil.')
+        updates = []
+        changed_cuts = 0
+        occurrences = 0
+        for row in rows:
+            title = str(row['titulo'] or '')
+            description = str(row['descricao_publicacao'] or '')
+            new_title, title_count = pattern.subn(replacement, title)
+            new_description, description_count = pattern.subn(replacement, description)
+            if len(new_title) > 100:
+                raise ValueError(f'A substituição deixaria o título do corte {row["id"]} com mais de 100 caracteres.')
+            if title_count or description_count:
+                updates.append((new_title, new_description, row['id']))
+                changed_cuts += 1
+                occurrences += title_count + description_count
+        conn.executemany(
+            "UPDATE cortes_gerados SET titulo=?, descricao_publicacao=?, atualizado_em=CURRENT_TIMESTAMP WHERE id=? AND job_id=? AND perfil_id=?",
+            [(title, description, cut_id, job_id, perfil_id) for title, description, cut_id in updates],
+        )
+        conn.commit()
+        return {'cuts': changed_cuts, 'occurrences': occurrences, 'total': len(rows)}
+    finally:
+        conn.close()
+
+
+def update_cut_caption(cut_id, style=None, caption_path=None, status=None, error=None, font=None, size=None, position=None, stroke_color=None, stroke_size=None, style_id=None, config_json=None, perfil_id=1):
+    perfil_id = normalize_profile_id(perfil_id)
+    init_db()
+    conn = get_connection()
+    try:
+        changes = ["atualizado_em=CURRENT_TIMESTAMP"]
+        values = []
+        for column, value in (("legenda_style_id", style_id), ("legenda_config_json", config_json), ("legenda_estilo", style), ("legenda_fonte", font), ("legenda_tamanho", size), ("legenda_posicao", position), ("legenda_stroke_cor", stroke_color), ("legenda_stroke_tamanho", stroke_size), ("legenda_caminho", caption_path), ("legenda_status", status), ("legenda_erro", error)):
+            if value is not None:
+                changes.append(f"{column}=?")
+                values.append(value)
+        values.extend((cut_id, perfil_id))
+        conn.execute(f"UPDATE cortes_gerados SET {', '.join(changes)} WHERE id=? AND perfil_id=?", values)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_cut_related_video(cut_id, video_id, video_title, perfil_id=1, status=None):
+    perfil_id = normalize_profile_id(perfil_id)
+    init_db()
+    conn = get_connection()
+    try:
+        related_status = status or ("pendente" if video_id else "sem_relacao")
         conn.execute("""
             UPDATE cortes_gerados
-            SET related_video_id=?, related_video_title=?, related_video_status='pendente',
+            SET related_video_id=?, related_video_title=?, related_video_status=?,
                 related_video_error=NULL, related_video_updated_at=CURRENT_TIMESTAMP, atualizado_em=CURRENT_TIMESTAMP
             WHERE id=? AND perfil_id=?
-        """, (video_id or None, video_title or None, cut_id, perfil_id))
+        """, (video_id or None, video_title or None, related_status, cut_id, perfil_id))
         conn.commit()
     finally:
         conn.close()

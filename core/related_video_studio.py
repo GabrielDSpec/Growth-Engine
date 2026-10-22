@@ -113,6 +113,28 @@ def _capture_studio_diagnostics(page):
         pass
 
 
+def _open_studio_video(page, short_video_id):
+    url = f"https://studio.youtube.com/video/{short_video_id}/edit"
+    last_error = None
+    for attempt in range(3):
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(3000 + attempt * 2000)
+            body_text = page.locator("body").inner_text(timeout=3000).lower()
+            if "ops! algo deu errado" not in body_text and "something went wrong" not in body_text:
+                return
+            last_error = "O YouTube Studio retornou a página genérica de erro."
+        except Exception as error:
+            last_error = str(error)
+        if attempt < 2:
+            try:
+                page.reload(wait_until="domcontentloaded", timeout=60000)
+            except Exception as error:
+                last_error = str(error)
+    _capture_studio_diagnostics(page)
+    raise RuntimeError(f"O editor do YouTube Studio não ficou disponível após 3 tentativas: {last_error}")
+
+
 def _fill_related_search(page, value, timeout_error=Exception):
     selectors = [
         "ytcp-content-pick-dialog input[placeholder*='Pesquisar' i]",
@@ -213,8 +235,7 @@ def aplicar_video_relacionado(short_video_id, related_video_id, perfil_id=1):
                 args=["--disable-blink-features=AutomationControlled"],
             )
             page = browser.new_page()
-            page.goto(f"https://studio.youtube.com/video/{short_video_id}/edit", wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(3000)
+            _open_studio_video(page, short_video_id)
             if "accounts.google.com" in page.url:
                 raise RuntimeError("A sessão do YouTube Studio precisa ser autenticada.")
 

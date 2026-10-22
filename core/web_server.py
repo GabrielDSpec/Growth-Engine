@@ -1,5 +1,6 @@
 from core.transcriber import TranscriptionCancelled, _parse_srt, transcrever_arquivo_local_segmentos, transcrever_video_youtube
 import json
+import filecmp
 import glob
 import mimetypes
 import os
@@ -20,8 +21,11 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from core.database import get_connection, init_db, salvar_perfil_google
 from core.cutter import GenerationCancelled, OLLAMA_CUTS_ENABLED, OLLAMA_MAX_SECONDS, _calcular_timeout_ollama, gerar_cortes_com_retry, garimpar_vacas_roxas, calcular_score_observavel, _gerar_resposta_ollama, _gerar_resposta_ollama_http, _gerar_indice_editorial_estrutural
 from core.cutter import normalizar_titulo_corte, refinar_titulo_corte, _descricao_editorial_local, _titulo_editorial_local, _titulo_generico
+from core.captions import CAPTION_FONTS, CAPTION_POSITIONS, CAPTION_STROKE_COLORS, CAPTION_STROKE_WIDTHS, CAPTION_STYLES
+from core.caption_styles import get_caption_style, import_caption_style, list_caption_styles, validate_style_config
+from core.caption_fonts import caption_fonts_dir, list_caption_fonts, store_caption_font
 from core.config import MAX_UPLOAD_BYTES, PASTA_LONGOS, PASTA_SHORTS, UPLOAD_CHUNK_BYTES, obter_pastas_midia
-from core.cuts_repository import create_cut, delete_cuts_for_job, prune_unavailable_cuts, repair_unavailable_completed_cuts, update_cut, update_cut_metadata, update_cut_related_video, update_cut_schedule_recommendation, list_cuts
+from core.cuts_repository import create_cut, delete_cuts_for_job, list_cut_caption_transcript, list_cuts, prune_unavailable_cuts, repair_unavailable_completed_cuts, replace_cut_cycle_metadata, save_cut_caption_transcript, update_cut, update_cut_caption, update_cut_metadata, update_cut_related_video, update_cut_schedule_recommendation
 from core.editorial_mapper import dossier_path, load_dossier, load_or_build_dossier, build_dossier, harvest_candidates
 from core.media_tools import MediaToolError, validar_ferramentas, renderizar_corte, localizar_ferramentas, nome_seguro_arquivo, obter_duracao
 from core.vision_tools import annotate_transcript_segments, format_annotated_segments_for_prompt, scan_media_triggers
@@ -40,7 +44,7 @@ from core.profiles_repository import create_profile, delete_profile
 from core.utils import registrar_log
 from core.utils import calcular_hash_arquivo
 from core.google_oauth import criar_url_autorizacao, concluir_autorizacao, serializar_scopes, cifrar_token
-from core.publisher import _metadata_for_cut, _transcript_for_cut, planejar_melhores_slots, publicar_corte_imediato, publicar_e_agendar_corte
+from core.publisher import _metadata_for_cut, _transcript_for_cut, _youtube_client, arquivo_publicacao_corte, planejar_melhores_slots, publicar_corte_imediato, publicar_e_agendar_corte
 from core.related_video_studio import aplicar_video_relacionado
 from googleapiclient.discovery import build
 
@@ -282,7 +286,7 @@ def _remove_video_artifacts(perfil_id, video_id, file_hashes, paths):
 def _delete_editorial_dossier(video_id, perfil_id):
     conn = get_connection()
     try:
-        row = conn.execute(
+        rows = conn.execute(
             "SELECT 1 FROM videos_historico WHERE video_id=? AND perfil_id=? LIMIT 1",
             (video_id, perfil_id),
         ).fetchone()
@@ -330,7 +334,7 @@ def _clear_transcription_cache(video_id, perfil_id):
                 file_hashes.add(calcular_hash_arquivo(source_path))
             except (OSError, ValueError):
                 pass
-        conn.execute(
+        rows = conn.execute(
             "UPDATE videos_historico SET transcricao=NULL, transcricao_segmentos=NULL, duracao_segundos=NULL, file_hash=NULL, atualizado_em=CURRENT_TIMESTAMP WHERE video_id=? AND perfil_id=?",
             (video_id, perfil_id),
         )
@@ -718,6 +722,33 @@ def _receive_srt_upload(handler, content_type, content_length, upload_dir):
     raise ValueError("Campo multipart 'file' ausente.")
 
 
+def _receive_font_upload(handler, content_type, content_length, upload_dir):
+    if content_length <= 0 or content_length > 50 * 1024 * 1024:
+        raise ValueError("A fonte excede o limite de 50 MB.")
+    boundary_token = content_type.split("boundary=", 1)[-1].strip().strip('"')
+    if not boundary_token:
+        raise ValueError("Cabeçalho multipart inválido.")
+    boundary = ("--" + boundary_token).encode()
+    body = handler.rfile.read(content_length)
+    for part in body.split(boundary):
+        if b"\r\n\r\n" not in part:
+            continue
+        headers, payload = part.split(b"\r\n\r\n", 1)
+        disposition = headers.decode("latin-1", errors="replace")
+        if 'name="file"' not in disposition:
+            continue
+        filename = disposition.split("filename=", 1)[-1].split("\r\n", 1)[0].strip().strip('"') if "filename=" in disposition else "fonte.ttf"
+        payload = payload.rstrip(b"\r\n")
+        if not payload:
+            raise ValueError("Upload de fonte vazio.")
+        os.makedirs(upload_dir, exist_ok=True)
+        path = os.path.join(upload_dir, f"upload_{uuid.uuid4().hex}{os.path.splitext(filename)[1].lower()}")
+        with open(path, "wb") as output:
+            output.write(payload)
+        return path, os.path.basename(filename)
+    raise ValueError("Campo multipart 'file' ausente.")
+
+
 def _format_count(value):
     value = int(value or 0)
     if value >= 1_000_000:
@@ -820,6 +851,22 @@ def _admin_reset_jobs():
         TRANSCRIPTION_JOBS.pop(job_id, None)
         CUT_JOBS.pop(job_id, None)
     return {"cancelados": len(job_ids)}
+
+
+def _admin_clear_finished_jobs(perfil_id):
+    init_db()
+    finished_statuses = ("completed", "failed", "cancelled", "interrupted", "rejected", "needs_review", "needs_review_fallback")
+    conn = get_connection()
+    try:
+        placeholders = ",".join("?" for _ in finished_statuses)
+        removed = conn.execute(
+            f"DELETE FROM tarefas_jobs WHERE perfil_id=? AND status IN ({placeholders})",
+            (perfil_id, *finished_statuses),
+        ).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    return {"removidos": removed}
 
 
 def _admin_vacuum_db():
@@ -970,7 +1017,7 @@ def _fetch_related_videos(perfil_id=1, query=""):
     conn = get_connection()
     try:
         params = [perfil_id]
-        where = "perfil_id=? AND length(video_id)=11 AND tipo='video' AND status IN ('publicado', 'publicado_externo')"
+        where = "perfil_id=? AND length(video_id)=11 AND tipo='video' AND status IN ('publicado', 'publicado_externo', 'programado', 'agendado')"
         if query:
             where += " AND titulo LIKE ?"
             params.append(f"%{query}%")
@@ -1837,18 +1884,26 @@ def _save_publication_description(cut_id, cut, perfil_id):
 
 
 def _published_short_for_cut(cut, perfil_id):
-    source_path = cut.get("caminho_saida")
-    if not source_path:
-        return None
+    source_path = arquivo_publicacao_corte(cut)
+    title = str(cut.get("titulo") or "").strip()
+    description = str(cut.get("descricao_publicacao") or "").strip()
     conn = get_connection()
     try:
-        row = conn.execute(
-            "SELECT video_id, status, titulo, descricao FROM videos_historico WHERE perfil_id=? AND tipo='short' AND arquivo_origem=? AND status IN ('publicado_externo', 'programado') ORDER BY atualizado_em DESC LIMIT 1",
-            (perfil_id, source_path),
-        ).fetchone()
-        return dict(row) if row else None
+        rows = conn.execute(
+            "SELECT video_id, status, titulo, descricao, arquivo_origem FROM videos_historico WHERE perfil_id=? AND tipo='short' AND status IN ('publicado_externo', 'programado') AND (arquivo_origem=? OR (? <> '' AND titulo=?) OR (? <> '' AND descricao=?)) ORDER BY atualizado_em DESC",
+            (perfil_id, source_path, title, title, description, description),
+        ).fetchall()
     finally:
         conn.close()
+    for candidate in rows:
+        try:
+            youtube = _youtube_client(perfil_id)
+            exists = youtube.videos().list(part="id", id=candidate["video_id"]).execute().get("items")
+        except Exception:
+            exists = []
+        if exists:
+            return dict(candidate)
+    return None
 
 
 def _run_selected_cuts_job(job_id, cut_ids, perfil_id):
@@ -1886,7 +1941,148 @@ def _run_selected_cuts_job(job_id, cut_ids, perfil_id):
         _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="failed", progress=0, message=str(error), error=str(error))
 
 
+def _run_caption_job(job_id, cut_id, style, font, size, position, stroke_color, stroke_size, perfil_id, style_id=None, style_config=None, primary_color="#FFFFFF", highlight_color="#FF0000", background_color="#000000", background_alpha=50, position_y=None, position_x=None, uma_linha=False):
+    try:
+        _raise_if_cancelled(job_id)
+        if style_config:
+            style = style_config["style"]
+            font = style_config["font"]
+            size = style_config["size"]
+            position = style_config["position"]
+            stroke_color = style_config["stroke_color"]
+            stroke_size = style_config["stroke_size"]
+            primary_color = style_config["primary_color"]
+            highlight_color = style_config["highlight_color"]
+            background_color = style_config["background_color"]
+            background_alpha = style_config["background_alpha"]
+            position_y = style_config.get("position_y")
+            position_x = style_config.get("position_x")
+            uma_linha = style_config.get("uma_linha", False)
+        cut = next((item for item in list_cuts(perfil_id=perfil_id) if item["id"] == cut_id), None)
+        if not cut:
+            raise RuntimeError("Corte não encontrado para gerar legendas.")
+        if style not in CAPTION_STYLES:
+            raise ValueError(f"Estilo de legenda desconhecido: {style}")
+        fontes_permitidas = list_caption_fonts(perfil_id)
+        if font not in set(CAPTION_FONTS) | set(fontes_permitidas):
+            raise ValueError(f"Fonte de legenda não permitida: {font}")
+        size = int(size)
+        if not 32 <= size <= 160:
+            raise ValueError("O tamanho da legenda deve estar entre 32 e 160.")
+        if position not in CAPTION_POSITIONS:
+            raise ValueError(f"Posição de legenda desconhecida: {position}")
+        if stroke_color not in CAPTION_STROKE_COLORS and not re.fullmatch(r"#[0-9A-Fa-f]{6}", str(stroke_color)):
+            raise ValueError(f"Cor de stroke inválida: {stroke_color}.")
+        if int(stroke_size) not in CAPTION_STROKE_WIDTHS:
+            raise ValueError(f"Espessura de stroke inválida: {stroke_size}.")
+        stroke_size = int(stroke_size)
+        transcription = _fetch_transcription(cut["video_id"], perfil_id=perfil_id) or {}
+        segments = transcription.get("segments") or []
+        inicio_corte = float(cut["inicio_segundos"])
+        fim_corte = float(cut["fim_segundos"])
+        edited_segments = {int(segment["indice"]): segment for segment in list_cut_caption_transcript(cut_id, perfil_id=perfil_id)}
+        for index, segment in enumerate(segments):
+            segment_index = int(segment.get("indice", index))
+            edited = edited_segments.get(segment_index)
+            if edited is not None:
+                segment["texto"] = edited["texto"]
+                segment["palavras"] = []
+                segment["words"] = []
+        segments = [
+            segment for segment in segments
+            if float(segment.get("fim", segment.get("end", 0)) or 0) > inicio_corte
+            and float(segment.get("inicio", segment.get("start", 0)) or 0) < fim_corte
+        ]
+        if not segments:
+            raise RuntimeError("A transcrição do vídeo não possui segmentos para gerar legendas.")
+        source_path = cut.get("caminho_saida") if cut.get("caminho_saida") and os.path.isfile(cut["caminho_saida"]) else cut.get("arquivo_origem")
+        if not source_path or not os.path.isfile(source_path):
+            raise RuntimeError("O arquivo do corte não foi encontrado no disco.")
+        source_is_rendered_cut = source_path == cut.get("caminho_saida")
+        render_start = 0.0 if source_is_rendered_cut else inicio_corte
+        render_end = obter_duracao(source_path) if source_is_rendered_cut else fim_corte
+        render_vertical = not source_is_rendered_cut
+        render_intervals = None if source_is_rendered_cut else cut.get("montagem_intervalos")
+        if source_is_rendered_cut:
+            relative_segments = []
+            for segment in segments:
+                shifted = dict(segment)
+                for start_key, end_key in (("inicio", "fim"), ("start", "end")):
+                    if start_key in shifted:
+                        shifted[start_key] = max(0.0, float(shifted[start_key]) - inicio_corte)
+                    if end_key in shifted:
+                        shifted[end_key] = max(0.0, float(shifted[end_key]) - inicio_corte)
+                words = shifted.get("palavras") or shifted.get("words")
+                if words:
+                    shifted_words = []
+                    for word in words:
+                        shifted_word = dict(word)
+                        for start_key, end_key in (("inicio", "fim"), ("start", "end")):
+                            if start_key in shifted_word:
+                                shifted_word[start_key] = max(0.0, float(shifted_word[start_key]) - inicio_corte)
+                            if end_key in shifted_word:
+                                shifted_word[end_key] = max(0.0, float(shifted_word[end_key]) - inicio_corte)
+                        shifted_words.append(shifted_word)
+                    if "palavras" in shifted:
+                        shifted["palavras"] = shifted_words
+                    if "words" in shifted:
+                        shifted["words"] = shifted_words
+                relative_segments.append(shifted)
+            segments = relative_segments
+        output_dir = obter_pastas_midia(perfil_id)["shorts"]
+        output_name = (
+            f"{nome_seguro_arquivo(cut['video_id'])}_{cut_id}_"
+            f"{nome_seguro_arquivo(normalizar_titulo_corte(cut.get('titulo')), 'corte')}_legenda_{style}_{size}_{job_id[:8]}.mp4"
+        )
+        output_path = os.path.join(output_dir, output_name)
+        snapshot = style_config or {"style_id": style_id or style, "style": style, "font": font, "size": size, "position": position, "stroke_color": stroke_color, "stroke_size": stroke_size, "animation": "none"}
+        update_cut_caption(cut_id, style=style, font=font, size=size, position=position, stroke_color=stroke_color, stroke_size=stroke_size, style_id=style_id or style, config_json=json.dumps(snapshot, ensure_ascii=False), caption_path=output_path, status="renderizando", error=None, perfil_id=perfil_id)
+        _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="running", progress=10, message="Gerando arquivo de legendas", stage="captions")
+        renderizar_corte(
+            source_path,
+            output_path,
+            render_start,
+            render_end,
+            intervalos=render_intervals,
+            vertical=render_vertical,
+            legenda_segmentos=segments,
+            legenda_estilo=style,
+            legenda_titulo=cut.get("titulo") or "Growth Engine",
+            legenda_fonte=font,
+            legenda_tamanho=size,
+            legenda_posicao=position,
+            legenda_stroke_cor=stroke_color,
+            legenda_stroke_tamanho=stroke_size,
+            legenda_cor_texto=primary_color,
+            legenda_cor_destaque=highlight_color,
+            legenda_cor_fundo=background_color,
+            legenda_opacidade_fundo=background_alpha,
+            legenda_posicao_y=position_y,
+            legenda_posicao_x=position_x,
+            legenda_uma_linha=uma_linha,
+            legenda_animacao=(style_config or {}).get("animation", "none"),
+            legenda_diretorio_fontes=str(caption_fonts_dir(perfil_id)),
+            legenda_fontes_permitidas=fontes_permitidas,
+        )
+        original_output = cut.get("caminho_saida")
+        if original_output and os.path.isfile(original_output) and filecmp.cmp(output_path, original_output, shallow=False):
+            raise RuntimeError("O renderizador produziu uma saída idêntica ao corte sem legendas.")
+        update_cut_caption(cut_id, style=style, font=font, size=size, position=position, stroke_color=stroke_color, stroke_size=stroke_size, style_id=style_id or style, config_json=json.dumps(snapshot, ensure_ascii=False), caption_path=output_path, status="concluido", error=None, perfil_id=perfil_id)
+        result = {"cut_id": cut_id, "style_id": style_id or style, "config": snapshot, "caption_output_path": output_path, "status": "concluido"}
+        _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="completed", progress=100, message="Legendas geradas", result=result)
+        update_job(job_id, status="completed", progress=100, message="Legendas geradas", result=json.dumps(result, ensure_ascii=False), perfil_id=perfil_id)
+    except JobCancelled as error:
+        update_cut_caption(cut_id, status="cancelado", error=str(error), perfil_id=perfil_id)
+        _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="cancelled", message=str(error))
+        update_job(job_id, status="cancelled", message=str(error), error=str(error), perfil_id=perfil_id)
+    except Exception as error:
+        update_cut_caption(cut_id, status="falhou", error=str(error), perfil_id=perfil_id)
+        _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="failed", progress=0, message=str(error), error=str(error))
+        update_job(job_id, status="failed", progress=0, message=str(error), error=str(error), perfil_id=perfil_id)
+
+
 def _run_immediate_publish_job(job_id, cut_ids, perfil_id):
+    published_ids = []
     try:
         cuts = [cut for cut in list_cuts(perfil_id=perfil_id) if cut["id"] in cut_ids]
         results = []
@@ -1903,6 +2099,7 @@ def _run_immediate_publish_job(job_id, cut_ids, perfil_id):
                 results.append({"cut_id": cut["id"], "youtube_id": existing["video_id"], "status": "already_published", "idempotent": True})
                 continue
             published = publicar_corte_imediato(cut, perfil_id=perfil_id)
+            published_ids.append(published["youtube_id"])
             conn = get_connection()
             try:
                 conn.execute("""
@@ -1917,7 +2114,7 @@ def _run_immediate_publish_job(job_id, cut_ids, perfil_id):
                         related_video_id=excluded.related_video_id, related_video_title=excluded.related_video_title,
                         related_video_status=excluded.related_video_status,
                         atualizado_em=CURRENT_TIMESTAMP
-                """, (published["youtube_id"], published["titulo"], published["descricao"], published["date"], published["time"], cut["caminho_saida"], perfil_id, cut.get("related_video_id"), cut.get("related_video_title"), "pendente" if cut.get("related_video_id") else None))
+                """, (published["youtube_id"], published["titulo"], published["descricao"], published["date"], published["time"], arquivo_publicacao_corte(cut), perfil_id, cut.get("related_video_id"), cut.get("related_video_title"), "pendente" if cut.get("related_video_id") else "sem_relacao"))
                 conn.commit()
             finally:
                 conn.close()
@@ -1939,15 +2136,18 @@ def _run_immediate_publish_job(job_id, cut_ids, perfil_id):
         _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="cancelled", message=str(error))
         update_job(job_id, status="cancelled", message=str(error), perfil_id=perfil_id)
     except Exception as error:
-        criar_notificacao("Falha na postagem imediata", str(error), tipo="erro", perfil_id=perfil_id)
-        _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="failed", progress=0, message=str(error), error=str(error))
-        update_job(job_id, status="failed", progress=0, message=str(error), error=str(error), perfil_id=perfil_id)
+        message = str(error)
+        if published_ids:
+            message = f"{message} O YouTube já aceitou {len(published_ids)} upload(s), mas o histórico local falhou ao registrar o resultado. IDs: {', '.join(published_ids)}. Não tente repostar esses cortes sem conferir o canal."
+        criar_notificacao("Falha na postagem imediata", message, tipo="erro", perfil_id=perfil_id)
+        _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="failed", progress=0, message=message, error=message)
+        update_job(job_id, status="failed", progress=0, message=message, error=message, perfil_id=perfil_id)
 
 
-def _run_publish_job(job_id, cut_ids, perfil_id, requested_slots=None):
+def _run_publish_job(job_id, cut_ids, perfil_id, requested_slots=None, schedule_start_at=None):
     try:
         cuts = [cut for cut in list_cuts(perfil_id=perfil_id) if cut["id"] in cut_ids]
-        slots = requested_slots or planejar_melhores_slots(len(cuts), perfil_id=perfil_id, cuts=cuts)
+        slots = requested_slots or planejar_melhores_slots(len(cuts), perfil_id=perfil_id, cuts=cuts, start_at=schedule_start_at)
         if len(slots) != len(cuts):
             raise RuntimeError("Não foi possível encontrar slots futuros para todos os cortes.")
         results = []
@@ -1974,7 +2174,7 @@ def _run_publish_job(job_id, cut_ids, perfil_id, requested_slots=None):
                         related_video_id=excluded.related_video_id, related_video_title=excluded.related_video_title,
                         related_video_status=excluded.related_video_status,
                         atualizado_em=CURRENT_TIMESTAMP
-                """, (published["youtube_id"], published["titulo"], published["descricao"], published["date"], published["time"], cut["caminho_saida"], perfil_id, cut.get("related_video_id"), cut.get("related_video_title"), "pendente" if cut.get("related_video_id") else None))
+                """, (published["youtube_id"], published["titulo"], published["descricao"], published["date"], published["time"], arquivo_publicacao_corte(cut), perfil_id, cut.get("related_video_id"), cut.get("related_video_title"), "pendente" if cut.get("related_video_id") else "sem_relacao"))
                 conn.commit()
             finally:
                 conn.close()
@@ -2453,6 +2653,17 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
             except LookupError as error:
                 self._send_json({"error": str(error)}, status=404)
             return
+        if parsed.path == "/api/cuts/caption-transcript":
+            try:
+                cut_id = int(parse_qs(parsed.query).get("cut_id", [""])[0])
+                cut = next((item for item in list_cuts(perfil_id=self.request_profile_id) if item["id"] == cut_id), None)
+                if not cut:
+                    self._send_json({"error": "Corte não encontrado."}, status=404)
+                    return
+                self._send_json({"cut_id": cut_id, "segments": list_cut_caption_transcript(cut_id, perfil_id=self.request_profile_id)})
+            except (ValueError, TypeError) as error:
+                self._send_json({"error": f"Corte inválido: {error}"}, status=400)
+            return
         if parsed.path == "/api/cuts":
             video_id = parse_qs(parsed.query).get("video_id", [None])[0]
             repair_unavailable_completed_cuts(self.request_profile_id, video_id=video_id)
@@ -2475,12 +2686,19 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
             with open(thumbnail_path, "rb") as thumbnail:
                 self.wfile.write(thumbnail.read())
             return
+        if parsed.path == "/api/caption-styles":
+            self._send_json({"styles": list_caption_styles(self.request_profile_id)})
+            return
+        if parsed.path == "/api/caption-fonts":
+            self._send_json({"fonts": list_caption_fonts(self.request_profile_id)})
+            return
         if parsed.path == "/api/cuts/file":
             cut_id = parse_qs(parsed.query).get("id", [""])[0]
+            captioned = parse_qs(parsed.query).get("captions", ["0"])[0] == "1"
             try:
                 cut = next((item for item in list_cuts(perfil_id=self.request_profile_id) if str(item["id"]) == cut_id), None)
-                output_path = cut.get("caminho_saida") if cut else None
-                if not cut or cut.get("status") != "concluido" or not output_path or not os.path.isfile(output_path):
+                output_path = (cut.get("legenda_caminho") if captioned else cut.get("caminho_saida")) if cut else None
+                if not cut or not output_path or not os.path.isfile(output_path):
                     self.send_error(404, "Corte não disponível")
                     return
                 file_size = os.path.getsize(output_path)
@@ -2505,6 +2723,8 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                 self.send_header("Content-Type", "video/mp4")
                 self.send_header("Accept-Ranges", "bytes")
                 self.send_header("Content-Length", str(content_length))
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+                self.send_header("Pragma", "no-cache")
                 if range_header.startswith("bytes="):
                     self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
                 self.send_header("Content-Disposition", f"inline; filename={os.path.basename(output_path)}")
@@ -2770,6 +2990,12 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/admin/reset-jobs":
             try:
                 self._send_json({"status": "ok", **_admin_reset_jobs()})
+            except Exception as error:
+                self._send_json({"error": str(error)}, status=500)
+            return
+        if parsed.path == "/api/admin/clear-finished-jobs":
+            try:
+                self._send_json({"status": "ok", **_admin_clear_finished_jobs(self.request_profile_id)})
             except Exception as error:
                 self._send_json({"error": str(error)}, status=500)
             return
@@ -3166,24 +3392,25 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
                 cut_id = int(body.get("cut_id"))
+                no_related_video = body.get("no_related_video") is True
                 video_id = str(body.get("video_id") or "").strip()
                 video_title = str(body.get("video_title") or "").strip()
-                if len(video_id) != 11 or not video_title:
+                if not no_related_video and (len(video_id) != 11 or not video_title):
                     raise ValueError("Selecione um vídeo válido do canal.")
-                video = next((item for item in _fetch_related_videos(self.request_profile_id) if item["video_id"] == video_id and item["eligible"]), None)
-                if not video:
-                    raise ValueError("O vídeo relacionado não está disponível para seleção.")
                 cut = next((item for item in list_cuts(perfil_id=self.request_profile_id) if item["id"] == cut_id), None)
                 if not cut:
                     self._send_json({"error": "Corte não encontrado."}, status=404)
                     return
-                update_cut_related_video(cut_id, video_id, video["titulo"], perfil_id=self.request_profile_id)
+                video = None if no_related_video else next((item for item in _fetch_related_videos(self.request_profile_id) if item["video_id"] == video_id and item["eligible"]), None)
+                if not no_related_video and not video:
+                    raise ValueError("O vídeo relacionado não está disponível para seleção.")
+                update_cut_related_video(cut_id, None if no_related_video else video_id, None if no_related_video else video["titulo"], perfil_id=self.request_profile_id, status="sem_relacao" if no_related_video else "pendente")
                 criar_notificacao(
-                    "Vídeo relacionado salvo",
-                    f"O corte {cut_id} será relacionado ao vídeo “{video['titulo']}” após a publicação.",
+                    "Vídeo relacionado salvo" if video else "Corte sem vídeo relacionado",
+                    f"O corte {cut_id} será relacionado ao vídeo “{video['titulo']}” após a publicação." if video else f"O corte {cut_id} será publicado sem vídeo relacionado.",
                     perfil_id=self.request_profile_id,
                 )
-                self._send_json({"cut_id": cut_id, "related_video_id": video_id, "related_video_title": video["titulo"], "status": "pendente"})
+                self._send_json({"cut_id": cut_id, "related_video_id": None if no_related_video else video_id, "related_video_title": None if no_related_video else video["titulo"], "status": "sem_relacao" if no_related_video else "pendente"})
             except (ValueError, TypeError, json.JSONDecodeError) as error:
                 self._send_json({"error": str(error)}, status=400)
             return
@@ -3191,25 +3418,32 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
                 short_video_id = str(body.get("short_video_id") or "").strip()
+                no_related_video = body.get("no_related_video") is True
                 related_video_id = str(body.get("related_video_id") or "").strip()
-                _validar_ids_video_relacionado(short_video_id, related_video_id)
-                related = next((item for item in _fetch_related_videos(self.request_profile_id) if item["video_id"] == related_video_id and item["eligible"]), None)
-                if not related:
+                if len(short_video_id) != 11:
+                    raise ValueError("ID do Short inválido.")
+                if not no_related_video:
+                    _validar_ids_video_relacionado(short_video_id, related_video_id)
+                related = next((item for item in _fetch_related_videos(self.request_profile_id) if item["video_id"] == related_video_id and item["eligible"]), None) if not no_related_video else None
+                if not no_related_video and not related:
                     raise ValueError("O vídeo relacionado não está disponível para seleção.")
                 conn = get_connection()
                 try:
                     updated = conn.execute("""
                         UPDATE videos_historico
-                        SET related_video_id=?, related_video_title=?, related_video_status='pendente',
+                        SET related_video_id=?, related_video_title=?, related_video_status=?,
                             related_video_error=NULL, related_video_updated_at=CURRENT_TIMESTAMP,
                             atualizado_em=CURRENT_TIMESTAMP
                         WHERE perfil_id=? AND video_id=? AND tipo='short'
-                    """, (related_video_id, related["titulo"], self.request_profile_id, short_video_id)).rowcount
+                    """, (None if no_related_video else related_video_id, None if no_related_video else related["titulo"], "sem_relacao" if no_related_video else "pendente", self.request_profile_id, short_video_id)).rowcount
                     conn.commit()
                 finally:
                     conn.close()
                 if not updated:
                     self._send_json({"error": "Short não encontrado na Biblioteca."}, status=404)
+                    return
+                if no_related_video:
+                    self._send_json({"short_video_id": short_video_id, "related_video_id": None, "related_video_title": None, "status": "sem_relacao"})
                     return
                 if not TASK_RUNNER.submit(
                     "related_video_apply",
@@ -3271,6 +3505,57 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                 self._send_json({"cut_id": cut_id, "titulo": title, "descricao_publicacao": description})
             except (ValueError, TypeError, json.JSONDecodeError) as error:
                 self._send_json({"error": f"Metadados inválidos: {error}"}, status=400)
+            return
+        if parsed.path == "/api/cuts/caption-transcript":
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
+                cut_id = int(body.get("cut_id"))
+                cut = next((item for item in list_cuts(perfil_id=self.request_profile_id) if item["id"] == cut_id), None)
+                if not cut:
+                    self._send_json({"error": "Corte não encontrado."}, status=404)
+                    return
+                transcription = _fetch_transcription(cut["video_id"], perfil_id=self.request_profile_id) or {}
+                inicio_corte = float(cut["inicio_segundos"])
+                fim_corte = float(cut["fim_segundos"])
+                source_segments = [
+                    (index, segment) for index, segment in enumerate(transcription.get("segments") or [])
+                    if float(segment.get("fim", segment.get("end", 0)) or 0) > inicio_corte
+                    and float(segment.get("inicio", segment.get("start", 0)) or 0) < fim_corte
+                ]
+                source_by_index = {int(segment.get("indice", index)): segment for index, segment in source_segments}
+                submitted = {int(item["indice"]): str(item.get("texto") or "").strip() for item in body.get("segments", [])}
+                if set(submitted) != set(source_by_index):
+                    raise ValueError("A transcrição recebida não corresponde aos segmentos deste corte.")
+                edited_segments = []
+                for segment_index, source in source_by_index.items():
+                    text = submitted[segment_index]
+                    if not text or len(text) > 2000:
+                        raise ValueError("Cada segmento precisa ter entre 1 e 2000 caracteres.")
+                    edited_segments.append({
+                        "indice": segment_index,
+                        "inicio": float(source.get("inicio", source.get("start", 0)) or 0),
+                        "fim": float(source.get("fim", source.get("end", 0)) or 0),
+                        "texto": text,
+                    })
+                saved = save_cut_caption_transcript(cut_id, edited_segments, perfil_id=self.request_profile_id)
+                self._send_json({"cut_id": cut_id, "segments": saved, "saved": True})
+            except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+                self._send_json({"error": f"Transcrição inválida: {error}"}, status=400)
+            return
+        if parsed.path == "/api/cuts/replace-cycle-metadata":
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
+                job_id = str(body.get("job_id") or "").strip()
+                source = str(body.get("source") or "").strip()
+                replacement = str(body.get("replacement") or "").strip()
+                if not job_id:
+                    raise ValueError("O ciclo de cortes é obrigatório.")
+                if len(source) > 200 or len(replacement) > 200:
+                    raise ValueError("A palavra ou substituição pode ter no máximo 200 caracteres.")
+                result = replace_cut_cycle_metadata(job_id, source, replacement, perfil_id=self.request_profile_id)
+                self._send_json({"job_id": job_id, **result})
+            except (ValueError, TypeError, json.JSONDecodeError) as error:
+                self._send_json({"error": f"Substituição inválida: {error}"}, status=400)
             return
         if parsed.path == "/api/cuts/regenerate-metadata":
             try:
@@ -3341,6 +3626,7 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                 cut_id = int(body.get("cut_id"))
                 date = str(body.get("date") or "").strip()
                 slot = str(body.get("time") or "").strip()
+                schedule_start_at = str(body.get("start_at") or "").strip() or None
                 cut = next((item for item in list_cuts(perfil_id=self.request_profile_id) if item["id"] == cut_id), None)
                 if not cut or cut.get("status") != "concluido" or not cut.get("caminho_saida"):
                     self._send_json({"error": "O corte precisa estar renderizado antes do agendamento."}, status=400)
@@ -3350,10 +3636,10 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                     return
                 requested_slots = [{"date": date, "time": slot}] if date and slot else None
                 job_id = uuid.uuid4().hex
-                CUT_JOBS[job_id] = {"status": "queued", "progress": 0, "message": "Publicação na fila"}
+                CUT_JOBS[job_id] = {"status": "queued", "progress": 0, "message": "Publicação na fila", "cut_ids": [cut_id], "perfil_id": self.request_profile_id}
                 _cancel_event(job_id)
                 create_job(job_id, "cut_publish", cut["video_id"], perfil_id=self.request_profile_id)
-                if not TASK_RUNNER.submit("cut_publish", _run_publish_job, job_id, [cut_id], self.request_profile_id, requested_slots, key=f"cut-publish:{self.request_profile_id}:{cut_id}"):
+                if not TASK_RUNNER.submit("cut_publish", _run_publish_job, job_id, [cut_id], self.request_profile_id, requested_slots, schedule_start_at, key=f"cut-publish:{self.request_profile_id}:{cut_id}"):
                     self._send_json({"error": "Este corte já possui uma publicação em execução.", "job_id": job_id}, status=409)
                     return
                 self._send_json({"job_id": job_id, "status": "queued"}, status=202)
@@ -3367,6 +3653,7 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                 cut_ids = sorted({int(cut_id) for cut_id in body.get("cut_ids", [])})
                 date = str(body.get("date") or "").strip()
                 slot = str(body.get("time") or "").strip()
+                schedule_start_at = str(body.get("start_at") or "").strip() or None
                 if not cut_ids:
                     self._send_json({"error": "Selecione ao menos um corte."}, status=400)
                     return
@@ -3379,10 +3666,10 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                     return
                 requested_slots = ([{"date": date, "time": slot}] * len(cuts)) if date and slot else None
                 job_id = uuid.uuid4().hex
-                CUT_JOBS[job_id] = {"status": "queued", "progress": 0, "message": "Publicação em massa na fila"}
+                CUT_JOBS[job_id] = {"status": "queued", "progress": 0, "message": "Publicação em massa na fila", "cut_ids": cut_ids, "perfil_id": self.request_profile_id}
                 _cancel_event(job_id)
                 create_job(job_id, "cut_publish", cuts[0]["video_id"], perfil_id=self.request_profile_id)
-                if not TASK_RUNNER.submit("cut_publish", _run_publish_job, job_id, cut_ids, self.request_profile_id, requested_slots, key=f"bulk-publish:{self.request_profile_id}"):
+                if not TASK_RUNNER.submit("cut_publish", _run_publish_job, job_id, cut_ids, self.request_profile_id, requested_slots, schedule_start_at, key=f"bulk-publish:{self.request_profile_id}"):
                     self._send_json({"error": "Já existe uma publicação em massa em execução.", "job_id": job_id}, status=409)
                     return
                 self._send_json({"job_id": job_id, "status": "queued"}, status=202)
@@ -3404,7 +3691,7 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                     self._send_json({"error": error, "unavailable": unavailable}, status=400)
                     return
                 job_id = uuid.uuid4().hex
-                CUT_JOBS[job_id] = {"status": "queued", "progress": 0, "message": "Postagem imediata na fila"}
+                CUT_JOBS[job_id] = {"status": "queued", "progress": 0, "message": "Postagem imediata na fila", "cut_ids": cut_ids, "perfil_id": self.request_profile_id}
                 _cancel_event(job_id)
                 create_job(job_id, "cut_publish_now", cuts[0]["video_id"], perfil_id=self.request_profile_id)
                 if not TASK_RUNNER.submit("cut_publish_now", _run_immediate_publish_job, job_id, cut_ids, self.request_profile_id, key=f"bulk-publish-now:{self.request_profile_id}"):
@@ -3413,6 +3700,71 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                 self._send_json({"job_id": job_id, "status": "queued"}, status=202)
             except (ValueError, TypeError, json.JSONDecodeError) as error:
                 self._send_json({"error": f"Postagem imediata inválida: {error}"}, status=400)
+            return
+        if parsed.path == "/api/caption-styles/import":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length) or b"{}")
+                style_config = import_caption_style(payload, perfil_id=self.request_profile_id)
+                self._send_json({"style": style_config}, status=201)
+            except (ValueError, TypeError, json.JSONDecodeError) as error:
+                self._send_json({"error": f"Estilo de legenda inválido: {error}"}, status=400)
+            return
+        if parsed.path == "/api/caption-fonts/import":
+            temporary_path = None
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                content_type = self.headers.get("Content-Type", "")
+                if not content_type.lower().startswith("multipart/form-data"):
+                    raise ValueError("Use multipart/form-data com o campo file.")
+                temporary_path, filename = _receive_font_upload(self, content_type, length, str(caption_fonts_dir(self.request_profile_id)))
+                result = store_caption_font(temporary_path, filename, self.request_profile_id)
+                self._send_json({"font": result}, status=201)
+            except (ValueError, OSError) as error:
+                self._send_json({"error": f"Fonte inválida: {error}"}, status=400)
+            finally:
+                if temporary_path and os.path.exists(temporary_path):
+                    os.remove(temporary_path)
+            return
+        if parsed.path == "/api/cuts/generate-captions":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(length) or b"{}")
+                cut_id = int(body.get("cut_id"))
+                style_id = str(body.get("style_id") or body.get("style") or "clean").strip().lower()
+                stored_config = get_caption_style(style_id, perfil_id=self.request_profile_id)
+                style_config = validate_style_config({**stored_config, **{key: body[key] for key in ("style", "font", "size", "position", "stroke_color", "stroke_size", "primary_color", "highlight_color", "background_color", "background_alpha", "position_y", "position_x", "uma_linha") if key in body}, "style_id": style_id}, perfil_id=self.request_profile_id)
+                style = style_config["style"]
+                font = style_config["font"]
+                size = style_config["size"]
+                position = style_config["position"]
+                stroke_color = style_config["stroke_color"]
+                stroke_size = style_config["stroke_size"]
+                primary_color = style_config["primary_color"]
+                highlight_color = style_config["highlight_color"]
+                background_color = style_config["background_color"]
+                background_alpha = style_config["background_alpha"]
+                position_y = style_config.get("position_y")
+                position_x = style_config.get("position_x")
+                uma_linha = style_config.get("uma_linha", False)
+                cut = next((item for item in list_cuts(perfil_id=self.request_profile_id) if item["id"] == cut_id), None)
+                if not cut:
+                    self._send_json({"error": "Corte não encontrado."}, status=404)
+                    return
+                job_id = uuid.uuid4().hex
+                cut_duration_seconds = max(1, float(cut["fim_segundos"]) - float(cut["inicio_segundos"]))
+                rendered_cut_available = bool(cut.get("caminho_saida") and os.path.isfile(cut["caminho_saida"]))
+                estimated_duration_seconds = max(45, round(cut_duration_seconds * (1.5 if rendered_cut_available else 5.3)))
+                CUT_JOBS[job_id] = {"status": "queued", "progress": 0, "message": "Geração de legendas na fila", "video_id": cut["video_id"], "estimated_duration_seconds": estimated_duration_seconds}
+                _cancel_event(job_id)
+                create_job(job_id, "caption_render", cut["video_id"], perfil_id=self.request_profile_id)
+                update_job(job_id, perfil_id=self.request_profile_id, checkpoint={"kind": "captions", "cut_id": cut_id, "cut_ids": [cut_id], "style_id": style_id, "estimated_duration_seconds": estimated_duration_seconds})
+                if not TASK_RUNNER.submit("caption_render", _run_caption_job, job_id, cut_id, style, font, size, position, stroke_color, stroke_size, self.request_profile_id, style_id, style_config, primary_color, highlight_color, background_color, background_alpha, position_y, position_x, uma_linha, key=f"caption-render:{self.request_profile_id}:{cut_id}"):
+                    self._send_json({"error": "Este corte já possui uma geração de legendas em execução.", "job_id": job_id}, status=409)
+                    return
+                self._send_json({"job_id": job_id, "cut_id": cut_id, "style_id": style_id, "style": style_config, "status": "queued", "estimated_duration_seconds": estimated_duration_seconds}, status=202)
+            except (ValueError, TypeError, json.JSONDecodeError) as error:
+                self._send_json({"error": f"Geração de legendas inválida: {error}"}, status=400)
             return
         if parsed.path == "/api/cuts/render-selected":
             try:

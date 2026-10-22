@@ -288,6 +288,7 @@ class ControlPanel(ctk.CTk):
         grid.pack(fill="x")
         self._action_button(grid, "Limpar Cache de Transcrição", self._clean_cache, 0, "#536b82")
         self._action_button(grid, "Sincronizar Banco de Dados", self._sync_database, 1, "#287c68")
+        self._action_button(grid, "Limpar Jobs Finalizados", self._clear_finished_jobs, 2, "#9a6b22")
         self.maintenance_log = ctk.CTkTextbox(parent, height=260, state="disabled")
         self.maintenance_log.pack(fill="both", expand=True, pady=(24, 0))
 
@@ -631,6 +632,28 @@ class ControlPanel(ctk.CTk):
                     failed_jobs += cursor.rowcount
             connection.commit()
         return f"Banco sincronizado: {repaired_cuts} corte(s) reparado(s), {failed_jobs} job(s) marcado(s) como falho(s)."
+
+    def _clear_finished_jobs(self):
+        if not messagebox.askyesno(
+            "Limpar jobs finalizados",
+            "Remover jobs concluídos, falhos e cancelados do perfil atual? Jobs ativos serão preservados.",
+        ):
+            return
+        self._run_action("Limpando jobs finalizados...", self._clear_finished_jobs_worker)
+
+    def _clear_finished_jobs_worker(self):
+        finished_statuses = (
+            "completed", "failed", "cancelled", "interrupted",
+            "rejected", "needs_review", "needs_review_fallback",
+        )
+        placeholders = ",".join("?" for _ in finished_statuses)
+        with sqlite3.connect(DB_PATH, timeout=30) as connection:
+            cursor = connection.execute(
+                f"DELETE FROM tarefas_jobs WHERE perfil_id=? AND status IN ({placeholders})",
+                (PROFILE_ID, *finished_statuses),
+            )
+            connection.commit()
+        return f"Jobs finalizados limpos: {cursor.rowcount} job(s) removido(s)."
 
     def _run_action(self, initial_message, worker):
         self.status_var.set(initial_message)

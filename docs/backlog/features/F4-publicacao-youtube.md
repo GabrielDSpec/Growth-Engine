@@ -21,6 +21,8 @@ Enviar cortes renderizados para o canal correto, com metadados editoriais e hora
 - Para cortes originados de vídeos públicos do YouTube, a descrição inclui automaticamente o link `https://www.youtube.com/watch?v=<video_id>` do vídeo original.
 - Uploads locais não recebem link de origem, porque não possuem uma URL pública conhecida.
 - A postagem e o agendamento permitem selecionar um vídeo relacionado do canal; a escolha é persistida com status `pendente` para aplicação posterior no YouTube Studio.
+- A postagem e o agendamento também permitem confirmar “Nenhum vídeo relacionado”; essa decisão é persistida como `sem_relacao`, evitando `NULL` em `videos_historico.related_video_status`.
+- A Central diferencia falha de geração de falha de publicação; se o upload imediato for aceito pelo YouTube e o registro local falhar depois, a notificação informa os IDs externos para conferência antes de qualquer nova tentativa.
 - O menu do perfil oferece `Renovar permissões YouTube`, iniciando novo consentimento OAuth com `prompt=consent` sem apagar os dados do perfil.
 - O fluxo OAuth solicita `access_type=offline` e `prompt=consent`; o callback atualiza o access token e só substitui o refresh token quando o Google devolve um novo valor, preservando o anterior nas reconexões. Publisher e sincronização constroem `Credentials` com access token, refresh token, `token_uri`, client ID e client secret para renovação automática.
 - A listagem de cortes repara registros `concluido` cujo MP4 sumiu, alterando-os para `falhou`; as rotas de agendamento recusam arquivos ausentes ou vazios com HTTP 400.

@@ -7,6 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from core.config import DIRETORIO_PROJETO
+from core.captions import gerar_ass, gerar_cues_relativos
 from core.utils import registrar_log
 
 
@@ -119,13 +120,44 @@ def _falha_encoder_hardware(error):
     return any(marcador in mensagem for marcador in marcadores)
 
 
-def montar_comando_render(ffmpeg, caminho_origem, caminho_saida, inicio_render, fim_render, filtro=None, encoder=None):
+def _caminho_legenda_ffmpeg(caminho):
+    valor = str(caminho).replace("\\", "/")
+    valor = valor.replace(":", r"\:").replace("'", r"\'")
+    return f"subtitles='{valor}'"
+
+
+def _adicionar_legenda_filtro(filtro, caminho_legenda, diretorio_fontes=None):
+    filtro_legenda = _caminho_legenda_ffmpeg(caminho_legenda)
+    if diretorio_fontes:
+        fontes = str(diretorio_fontes).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
+        filtro_legenda += f":fontsdir='{fontes}'"
+    if str(filtro or "").startswith("filter_complex:"):
+        grafo = str(filtro)[len("filter_complex:"):]
+        if "[outv]" not in grafo:
+            raise MediaToolError("Filtro complexo de legenda não possui saída [outv].")
+        grafo = grafo.replace("[outv]", "[caption_base]", 1)
+        return f"filter_complex:{grafo};[caption_base]{filtro_legenda}[outv]"
+    return f"{filtro},{filtro_legenda}" if filtro else filtro_legenda
+
+
+def montar_comando_render(
+    ffmpeg,
+    caminho_origem,
+    caminho_saida,
+    inicio_render,
+    fim_render,
+    filtro=None,
+    encoder=None,
+    caminho_legenda=None,
+    diretorio_fontes=None,
+):
     duracao_render = max(0.001, float(fim_render) - float(inicio_render))
     opcoes_encoder = obter_opcoes_encoder(ffmpeg, encoder)
     comando = [
         ffmpeg, "-y", "-i", caminho_origem, "-ss", f"{float(inicio_render):.3f}",
         "-t", f"{duracao_render:.3f}",
     ]
+    filtro = _adicionar_legenda_filtro(filtro, caminho_legenda, diretorio_fontes) if caminho_legenda else filtro
     usa_filtro_complexo = str(filtro or "").startswith("filter_complex:")
     if filtro:
         if usa_filtro_complexo:
@@ -143,8 +175,12 @@ def montar_comando_render(ffmpeg, caminho_origem, caminho_saida, inicio_render, 
     return comando
 
 
-def _executar_render_com_fallback(ffmpeg, caminho_origem, caminho_saida, inicio_render, fim_render, filtro, timeout):
-    comando = montar_comando_render(ffmpeg, caminho_origem, caminho_saida, inicio_render, fim_render, filtro)
+def _executar_render_com_fallback(
+    ffmpeg, caminho_origem, caminho_saida, inicio_render, fim_render, filtro, timeout, caminho_legenda=None, diretorio_fontes=None
+):
+    comando = montar_comando_render(
+        ffmpeg, caminho_origem, caminho_saida, inicio_render, fim_render, filtro, caminho_legenda=caminho_legenda, diretorio_fontes=diretorio_fontes
+    )
     try:
         _run(comando, timeout)
     except MediaToolError as error:
@@ -154,18 +190,54 @@ def _executar_render_com_fallback(ffmpeg, caminho_origem, caminho_saida, inicio_
         if os.path.exists(caminho_saida):
             os.remove(caminho_saida)
         comando_cpu = montar_comando_render(
-            ffmpeg, caminho_origem, caminho_saida, inicio_render, fim_render, filtro, encoder="libx264"
+            ffmpeg,
+            caminho_origem,
+            caminho_saida,
+            inicio_render,
+            fim_render,
+            filtro,
+            encoder="libx264",
+            caminho_legenda=caminho_legenda,
+            diretorio_fontes=diretorio_fontes,
         )
         _run(comando_cpu, timeout)
 
 
-def renderizar_corte(caminho_origem, caminho_saida, inicio, fim, filtro=None, timeout=600, intervalos=None, vertical=False):
+def renderizar_corte(
+    caminho_origem,
+    caminho_saida,
+    inicio,
+    fim,
+    filtro=None,
+    timeout=600,
+    intervalos=None,
+    vertical=False,
+    legenda_segmentos=None,
+    legenda_estilo=None,
+    legenda_titulo=None,
+    legenda_fonte=None,
+    legenda_tamanho=None,
+    legenda_posicao=None,
+    legenda_stroke_cor=None,
+    legenda_stroke_tamanho=None,
+    legenda_cor_texto=None,
+    legenda_cor_destaque=None,
+    legenda_cor_fundo=None,
+    legenda_opacidade_fundo=None,
+    legenda_posicao_y=None,
+    legenda_posicao_x=None,
+    legenda_uma_linha=False,
+    legenda_animacao=None,
+    legenda_diretorio_fontes=None,
+    legenda_fontes_permitidas=None,
+):
     ffmpeg, _ = localizar_ferramentas()
     duration = obter_duracao(caminho_origem)
     if not 0 <= float(inicio) < float(fim) <= duration:
         raise MediaToolError("Timestamps do corte estão fora da duração do arquivo.")
     os.makedirs(os.path.dirname(caminho_saida), exist_ok=True)
     intervalos = intervalos or []
+    gerar_legenda = bool(legenda_segmentos and legenda_estilo)
     if intervalos:
         normalizados = []
         for intervalo in intervalos:
@@ -179,8 +251,22 @@ def renderizar_corte(caminho_origem, caminho_saida, inicio, fim, filtro=None, ti
             for indice, (trecho_inicio, trecho_fim) in enumerate(normalizados):
                 parte = os.path.join(pasta_temporaria, f"parte-{indice}.mp4")
                 filtro_parte = _filtro_vertical(caminho_origem, trecho_inicio, trecho_fim) if vertical else filtro
+                caminho_legenda = None
+                if gerar_legenda:
+                    cues = gerar_cues_relativos(legenda_segmentos, trecho_inicio, trecho_fim, incluir_palavras=legenda_animacao == "karaoke")
+                    caminho_legenda = os.path.join(pasta_temporaria, f"parte-{indice}.ass")
+                    with open(caminho_legenda, "w", encoding="utf-8-sig") as arquivo_legenda:
+                        arquivo_legenda.write(gerar_ass(cues, legenda_estilo, legenda_titulo, legenda_fonte, legenda_tamanho, legenda_posicao, legenda_stroke_cor, legenda_stroke_tamanho, legenda_cor_texto, legenda_cor_destaque, legenda_cor_fundo, legenda_opacidade_fundo, legenda_posicao_y, legenda_posicao_x, legenda_animacao, legenda_fontes_permitidas, legenda_uma_linha))
                 _executar_render_com_fallback(
-                    ffmpeg, caminho_origem, parte, trecho_inicio, trecho_fim, filtro_parte, timeout
+                    ffmpeg,
+                    caminho_origem,
+                    parte,
+                    trecho_inicio,
+                    trecho_fim,
+                    filtro_parte,
+                    timeout,
+                    caminho_legenda=caminho_legenda,
+                    diretorio_fontes=legenda_diretorio_fontes,
                 )
                 partes.append(parte)
             lista = os.path.join(pasta_temporaria, "concat.txt")
@@ -192,12 +278,33 @@ def renderizar_corte(caminho_origem, caminho_saida, inicio, fim, filtro=None, ti
             raise MediaToolError("FFmpeg não produziu um arquivo composto válido.")
         return caminho_saida
     filtro_final = _filtro_vertical(caminho_origem, float(inicio), float(fim)) if vertical else filtro
+    caminho_legenda = None
+    pasta_legenda = None
+    if gerar_legenda:
+        pasta_legenda = tempfile.TemporaryDirectory(prefix="growth-caption-")
+        caminho_legenda = os.path.join(pasta_legenda.name, "captions.ass")
+        cues = gerar_cues_relativos(legenda_segmentos, float(inicio), float(fim), incluir_palavras=legenda_animacao == "karaoke")
+        with open(caminho_legenda, "w", encoding="utf-8-sig") as arquivo_legenda:
+            arquivo_legenda.write(gerar_ass(cues, legenda_estilo, legenda_titulo, legenda_fonte, legenda_tamanho, legenda_posicao, legenda_stroke_cor, legenda_stroke_tamanho, legenda_cor_texto, legenda_cor_destaque, legenda_cor_fundo, legenda_opacidade_fundo, legenda_posicao_y, legenda_posicao_x, legenda_animacao, legenda_fontes_permitidas, legenda_uma_linha))
     try:
-        _executar_render_com_fallback(ffmpeg, caminho_origem, caminho_saida, inicio, fim, filtro_final, timeout)
+        _executar_render_com_fallback(
+            ffmpeg,
+            caminho_origem,
+            caminho_saida,
+            inicio,
+            fim,
+            filtro_final,
+            timeout,
+            caminho_legenda=caminho_legenda,
+            diretorio_fontes=legenda_diretorio_fontes,
+        )
     except Exception:
         if os.path.exists(caminho_saida):
             os.remove(caminho_saida)
         raise
+    finally:
+        if pasta_legenda:
+            pasta_legenda.cleanup()
     if not arquivo_media_valido(caminho_saida):
         raise MediaToolError("FFmpeg não produziu um arquivo final válido.")
     return caminho_saida

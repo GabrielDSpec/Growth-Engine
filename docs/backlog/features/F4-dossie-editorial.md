@@ -62,6 +62,53 @@ Separar a análise editorial da renderização dos cortes, preservando em um dos
 - [x] Entrevistas de lideranças preservadas: o prompt editorial v3 trata presidentes, vice-presidentes, representantes e convidados como material prioritário, evitando que uma apresentação seja descartada antes da resposta substantiva.
 - [x] Títulos ancorados no trecho: a validação final compara o título com a transcrição efetivamente selecionada; quando não há evidência local, usa uma manchete derivada do conteúdo do próprio intervalo, sem depender de frame ou thumbnail.
 - [x] Regeneração individual de metadados: o modal do corte permite gerar novamente título ou descrição separadamente; o endpoint força nova análise usando a transcrição do intervalo e atualiza somente o campo solicitado.
+- [x] Estado visual por corte durante jobs: legenda, renderização, postagem/agendamento e regeneração de título/descrição substituem o card afetado por etapa, progresso e ETA; jobs em lote carregam os IDs dos cortes e o polling atualiza somente esses cards, sem recriar previews não envolvidos. A recuperação de jobs preserva timestamps/checkpoint para ETA, e o render recebe somente segmentos de legenda que cruzam o intervalo do corte.
+- [x] Preview legendado após conclusão: o player do card alterna para a saída `captions=1` quando `legenda_status` está concluído, em vez de continuar exibindo o MP4 original.
+- [x] Áudio inesperado ao abrir corte corrigido: o preview ampliado aguarda interação do usuário e pausa players anteriores antes de trocar de corte.
+- [x] Preview auxiliar de legendas silenciado: a mídia visual da configuração inicia sem áudio, com silêncio forçado na propriedade do elemento e volume zero.
+- [x] Seleção individual e geração em massa de legendas: o controle do card usa `Selecionar`; o ciclo oferece `Gerar legendas` a partir de dois cortes selecionados, com configuração compartilhada e jobs acompanhados individualmente.
+- [x] Integridade da saída legendada: o arquivo gerado recebe sufixo único por job e é comparado ao MP4 sem legendas; saídas idênticas falham e não são persistidas como concluídas.
+- [x] ETA de captions corrigido: jobs de legenda não extrapolam o progresso inicial de 10% sem telemetria contínua do FFmpeg; a interface mostra ETA calculando até receber uma estimativa real.
+- [x] ETA estimado persistente: o job calcula uma previsão pela duração do corte, salva o valor no checkpoint e a UI desconta o tempo decorrido, identificando o valor como `ETA estimado`.
+- [x] Legendas sobre o MP4 renderizado: quando disponível, o worker usa o arquivo final do corte como fonte, desloca segmentos e palavras para timestamps relativos e evita decodificar o vídeo original longo novamente; cortes de 89 segundos passam a ter previsão aproximada de 2m15s.
+- [x] Preview em tamanho real: controle de expandir sobreposto ao player abre o MP4 em popup vertical ampliado, mantendo controles de reprodução e suporte à versão legendada.
+- [x] Escala ASS estabilizada: `PlayResX` e `PlayResY` definidos como `1080x1920` para manter o tamanho configurado da legenda consistente no vídeo final.
+- [x] Refazer legendas atualiza o preview: o player recebe uma versão baseada no novo caminho de saída e a rota de mídia envia headers `no-cache`, evitando exibir o MP4 anterior.
+- [x] Controle de preview compacto: expansão em ícone sobreposto no canto inferior direito, alinhado aos controles nativos do player.
+- [x] Tela cheia nativa: o controle usa a API fullscreen do player HTML5 e mantém o popup como fallback quando necessário.
+- [x] Alinhamento do ícone fullscreen: controle fixo na barra inferior, ao lado do menu nativo do player.
+- [x] Proporção vertical no fullscreen: o preview usa o contêiner como elemento fullscreen e preserva `9:16` em telas horizontais.
+- [x] Personalização de cores: menu padrão e diálogo de geração expõem cores HEX para texto, destaque/karaokê, stroke e fundo, além da opacidade do fundo; o backend converte os valores para o formato ASS.
+- [x] Validação de stroke detalhada: compatibilidade com `black`, `white`, `coral` e HEX, com mensagens específicas para posição, cor e espessura inválidas.
+- [x] Legendas sem corte lateral: o renderizador calcula limite de caracteres conforme o tamanho da fonte, quebra karaoke por palavra e usa margens horizontais seguras no ASS.
+- [x] Preview de ajuste sobre o corte: o menu usa a mídia real do corte como fundo, atualiza tamanho/cores/stroke ao vivo e envia as coordenadas X/Y exatas do arraste ao ASS.
+- [x] Centralização horizontal independente: os editores de legenda oferecem “Centralizar horizontalmente”, levando X para 50% e preservando Y.
+- [x] Leitura da transcrição no ajuste de legenda: o modal permite abrir os segmentos do próprio corte com timestamps relativos para conferir palavras bugadas antes da geração.
+- [x] Edição persistida da transcrição no corte: o leitor permite corrigir cada segmento e salvar antes da geração; a legenda usa esse texto corrigido sem alterar a transcrição global do vídeo.
+- [x] Contraste e diagnóstico do leitor: os campos editáveis seguem o tema do modal, e a ausência de segmentos informa se falta transcrição temporizada ou se é necessário enviar SRT.
+- [x] Picker de relacionados: “Nenhum vídeo relacionado” aparece como primeiro item selecionável e a Biblioteca pode limpar uma relação existente sem iniciar aplicação no YouTube Studio.
+- [x] Integridade da publicação legendada: o publisher prioriza `legenda_caminho` quando `legenda_status` é concluído, sem fallback silencioso para o corte original; arquivo ausente interrompe o envio.
+- [x] Janela inicial do agendamento: no modo recomendado, o usuário informa data e hora de início e o planejador ignora candidatos anteriores, mantendo o ranking de melhores horários por corte.
+- [x] Relacionamento com estreia agendada: o picker aceita vídeos `programado` e `agendado`; o ID é mantido para aplicação pelo YouTube Studio após a publicação do corte.
+- [x] Acompanhamento da postagem: o progresso geral não é ocultado quando o job possui cortes-alvo, e o estado inicial inclui `cut_ids` para a restauração do polling.
+- [x] Reenvio após publicação sem legenda: a verificação de idempotência compara o arquivo efetivo de publicação, permitindo corrigir uploads antigos do original quando a versão legendada foi gerada depois.
+- [x] Deduplicação confiável no ciclo: candidatos com título ou descrição iguais são conferidos contra a existência real no YouTube antes de serem tratados como já publicados.
+- [x] Manutenção da fila: o executável `GrowthEnginePainel` oferece “Limpar Jobs Finalizados”, removendo apenas estados finais do perfil atual sem interromper jobs em execução.
+- [x] Abertura resiliente do Studio: a etapa de vídeo relacionado reconhece a página genérica de erro, repete a navegação até três vezes e captura HTML/screenshot se o editor continuar indisponível.
+- [x] Retry manual: Shorts com relação falha exibem um comando na Biblioteca que reenvia os mesmos IDs ao Studio sem duplicar o upload.
+- [x] Interface de legendas: o diálogo foi reorganizado em preview, controles rápidos e acordeão de ajustes avançados para reduzir ruído visual.
+- [x] Edição precisa de legendas: tamanho e opacidade possuem campos numéricos editáveis, sincronizados com seus controles deslizantes.
+- [x] Cache da interface: o identificador do `app.js` foi atualizado para garantir que o diálogo novo seja carregado após a atualização.
+- [x] Substituição de palavras por ciclo: o cabeçalho do ciclo permite trocar uma palavra ou expressão em todos os títulos e descrições do job, somente em palavras completas e sem afetar outros ciclos.
+- [x] Tamanho contínuo e centralização: slider de 32 a 96px atualiza a prévia em tempo real, e o comando de centralização reposiciona a legenda no centro do frame.
+- [x] Escala fiel da prévia: tamanho da fonte, stroke e sombras usam a proporção da composição ASS 1080x1920, mantendo o preview em 9:16 e recalculando ao redimensionar.
+- [x] Posição manual fiel no render: coordenadas arrastadas usam `\\an5\\pos(x,y)`, mantendo a mesma âncora central usada pelo preview visual.
+- [x] Legenda grande em uma linha: controles aceitam até 160px e o modo “Uma linha” preserva o texto sem `\\N` no ASS, inclusive no karaoke.
+- [x] Uma linha sem corte: preview e render calculam uma fonte efetiva menor quando necessário, mantendo todas as palavras dentro da largura segura.
+- [x] Cores com visual e atalhos: campos exibem a cor atual e círculos rápidos para preto, branco, coral, amarelo e azul, atualizando o mesmo valor usado no preview e no ASS.
+- [x] Semântica de cores do karaoke esclarecida: “Cor base” representa palavras não ativas em branco e “Cor destaque” representa a palavra ativa em amarelo, com mapeamento ASS alinhado.
+- [x] Prévia de uma linha corrigida: a fonte é recalculada pela largura efetivamente desenhada do texto, evitando divergência e corte nas bordas.
+- [x] Linha única pós-layout: o preview recalcula após o modal montar o layout e aplica margem segura adicional, alinhada à redução conservadora do ASS.
 - [x] Integridade do resultado atual: quando a geração de cortes executa, seus candidatos não são substituídos por momentos antigos do dossiê; títulos semelhantes em intervalos distintos permanecem válidos e o fallback escolhe janelas distribuídas no início, meio e encerramento do vídeo.
 - [x] Diagnóstico legível na Central: resultados por bloco sem o campo `aceitos` não são apresentados como zero aprovações; a interface os identifica como candidatos encontrados e reserva a contagem de aceitos para o resumo agregado.
 - [x] Curadoria sem fallback: somente candidatos validados pela IA entram na renderização; abaixo do mínimo, timeout, erro ou provider desativado produzem `failed` com rejeição explícita e zero cortes persistidos.
@@ -91,11 +138,12 @@ Separar a análise editorial da renderização dos cortes, preservando em um dos
 - [ ] Fase 1, enquadramento: substituir a decisão binária de “detectou rosto/não detectou” por uma classificação temporal com três estados: uma face estável, múltiplas faces e plano amplo/sem face.
 - [ ] Fase 2, foco facial: quando houver uma única face com confiança e estabilidade suficientes nas amostras, calcular o centro suavizado e manter o rosto dentro da janela 9:16, com margem para não cortar testa ou queixo.
 - [ ] Fase 3, composição ampla: quando houver várias faces, detecção instável ou nenhum rosto confiável, manter a fonte horizontal centralizada sobre fundo preenchido e desfocado; registrar no diagnóstico qual regra foi escolhida.
-- [ ] Fase 4, cues: selecionar os segmentos Whisper que intersectam o intervalo do corte, converter timestamps para zero relativo, juntar frases curtas e quebrar linhas por largura visual, sem alterar a transcrição original.
-- [ ] Fase 5, estilos: converter cues para ASS e oferecer presets `limpo`, `impacto`, `karaoke` e `podcast`, com fonte, tamanho, cor, contorno, sombra, alinhamento e posição validados no backend.
-- [ ] Fase 6, geração individual: adicionar botão `Gerar legendas` em cada card; abrir seletor de estilo e confirmação, gerar SRT/ASS temporários, renderizar uma nova saída do corte e preservar o MP4 original até a nova saída ser validada.
-- [ ] Fase 7, persistência e retry: salvar estilo, versão do renderer, caminho do arquivo, status e erro por corte; repetir somente a etapa pendente e invalidar a saída quando a transcrição ou o estilo mudar.
-- [ ] Fase 8, testes: cobrir detecção de uma/múltiplas/nenhuma face, limites de frase, timestamps relativos, caracteres especiais, cada preset e renderização sem legenda como regressão.
+- [x] Fase 4, cues: selecionar os segmentos Whisper que intersectam o intervalo do corte, converter timestamps para zero relativo, remover marcadores acústicos/HTML e quebrar linhas por largura visual, sem alterar a transcrição original.
+- [x] Fase 5, estilos: converter cues para ASS e oferecer presets `clean`, `bold` e `highlight`, com fonte, tamanho, posição, cor e espessura de stroke configuráveis e validados no backend; galeria JSON por perfil, presets protegidos, importação validada, preview/render unificados e snapshot imutável por corte implementados. Faster-Whisper preserva timestamps por palavra para karaoke ASS, com fallback para transcrições legadas; fontes TTF/OTF/TTC são armazenadas por perfil e entregues ao libass por `fontsdir`.
+- [x] Fase 6, geração individual: painel de opcionais com padrões de estilo/fonte/tamanho/posição, botão `Gerar legendas` em cada card com configuração individual, job assíncrono, nova saída do corte, download separado e preservação do MP4 original.
+- [x] Fase 6, UX de configuração: o bloco de legendas dos opcionais é expansível e fechado por padrão; controles, preview, galeria JSON e importação de fontes ficam no conteúdo aberto.
+- [ ] Fase 7, persistência e retry: salvar versão do renderer, repetir somente a etapa pendente e invalidar a saída quando a transcrição ou o estilo mudar. O `style_id` e o JSON efetivamente usado já são persistidos como snapshot por corte.
+- [ ] Fase 8, testes: a parte de legendas cobre timestamps relativos, clipping, marcadores acústicos, caracteres especiais, presets e regressão da renderização sem legenda; permanecem os testes de enquadramento facial e validação visual FFmpeg.
 
 ## Transição
 

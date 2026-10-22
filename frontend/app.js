@@ -4,11 +4,27 @@ let dashboard = { metrics: { videos_analisados: 0, views_top_15_display: '0', ta
 let cutSources = [];
 let selectedCutSource = null;
 let cutDurationRange = { min: 30, max: 60 };
+let cutOptionalSettings = { captions: false };
+let captionDefaults = { style: 'clean', font: 'Arial', size: 54, position: 'bottom', singleLine: false, primaryColor: '#FFFFFF', highlightColor: '#FFE45C', strokeColor: '#000000', strokeSize: 3, backgroundColor: '#000000', backgroundAlpha: 50 };
+let captionGallery = [];
+let captionFonts = ['Arial', 'Montserrat', 'Poppins', 'Bebas Neue', 'DejaVu Sans'];
+const captionStyleLabel = style => style.animation === 'karaoke' ? `${style.name} · Karaoke` : style.name;
+const captionColorValue = value => ({ black: '#000000', white: '#FFFFFF', coral: '#FF4B5B' }[String(value || '').toLowerCase()] || value || '#000000');
+const captionColorSwatches = [['#000000', 'Preto'], ['#FFFFFF', 'Branco'], ['#FF4B5B', 'Coral'], ['#FFE45C', 'Amarelo'], ['#3B82F6', 'Azul']];
+function createCaptionColorControl(inputAttributes) {
+  const input = createElement('input', inputAttributes);
+  const current = createElement('span', { className: 'caption-color-current', style: `background-color: ${input.value}` });
+  const swatches = createElement('div', { className: 'caption-color-swatches' }, captionColorSwatches.map(([value, label]) => createElement('button', { type: 'button', className: 'caption-color-swatch', 'data-caption-color': value, title: label, 'aria-label': label, style: `--swatch-color: ${value}` })));
+  input.addEventListener('input', () => { current.style.backgroundColor = input.value; });
+  return { input, control: createElement('div', { className: 'caption-color-control' }, [input, current, swatches]) };
+}
 let cutSuggestions = [];
 let persistedCuts = [];
 const selectedCandidateIds = new Set();
 let transcriptionJob = null;
 let cutJob = null;
+const activeCutOperations = new Map();
+const captionBatchJobs = new Map();
 let uploadProgress = null;
 let scheduledVideos = [];
 let libraryVideos = [];
@@ -463,6 +479,11 @@ function jobElapsedSeconds(job) {
 }
 function jobEtaSeconds(job, elapsedSeconds) {
   if (Number.isFinite(Number(job?.eta_seconds))) return Number(job.eta_seconds);
+  if (job?.kind === 'captions' || job?.tipo === 'caption_render') {
+    const estimatedDuration = Number(job?.estimated_duration_seconds);
+    if (!Number.isFinite(estimatedDuration)) return null;
+    return Number.isFinite(elapsedSeconds) ? Math.max(1, Math.round(estimatedDuration - elapsedSeconds)) : estimatedDuration;
+  }
   const progress = Number(job?.progress || 0);
   if (!Number.isFinite(elapsedSeconds) || progress <= 0 || progress >= 100) return null;
   return Math.max(1, Math.round(elapsedSeconds * (100 - progress) / progress));
@@ -645,6 +666,72 @@ function domButton(label, iconName, cls, action, extraAttributes = {}) {
 }
 function domText(tagName, className, value) {
   return createElement(tagName, { className, textContent: value });
+}
+function captionPreviewScale(stage) {
+  return Math.max(0.1, stage.getBoundingClientRect().width / 1080);
+}
+function scaleCaptionShadow(shadow, scale) {
+  return String(shadow || '').replace(/(-?\d+(?:\.\d+)?)px/g, (_, value) => `${(Number(value) * scale).toFixed(2)}px`);
+}
+function fitSingleLineCaption(stage, text, requestedSize) {
+  if (text.style.whiteSpace !== 'nowrap') return;
+  const fit = () => {
+    const maxWidth = stage.getBoundingClientRect().width * 0.84;
+    let fittedSize = requestedSize;
+    text.style.fontSize = `${fittedSize}px`;
+    while (text.getBoundingClientRect().width > maxWidth && fittedSize > 8) {
+      fittedSize *= 0.94;
+      text.style.fontSize = `${fittedSize}px`;
+    }
+  };
+  fit();
+  requestAnimationFrame(() => { fit(); requestAnimationFrame(fit); });
+}
+function setupCaptionPreview(stage, text, cut, positionControl) {
+  stage.classList.add('caption-preview-interactive');
+  if (cut?.id || cut?.cut_id) {
+    const cutId = Number(cut.cut_id || cut.id);
+    const captionReady = cut.legenda_status === 'concluido' && cut.legenda_caminho;
+    const mediaVersion = captionReady ? (cut.legenda_caminho || cut.atualizado_em) : (cut.caminho_saida || cut.atualizado_em);
+    const media = createElement('video', { className: 'caption-preview-media', loop: 'true', playsinline: 'true', preload: 'metadata' });
+    media.muted = true;
+    media.defaultMuted = true;
+    media.volume = 0;
+    media.addEventListener('loadeddata', () => { media.play().catch(() => {}); }, { once: true });
+    media.src = `/api/cuts/file?id=${encodeURIComponent(cutId)}&captions=${captionReady ? '1' : '0'}&perfil_id=${encodeURIComponent(activeProfileId)}&v=${encodeURIComponent(mediaVersion || '')}`;
+    stage.insertBefore(media, stage.firstChild);
+  }
+  text.style.position = 'absolute';
+  text.style.left = '50%';
+  text.style.transform = 'translate(-50%, -50%)';
+  const applyPosition = (position, exactY = null, exactX = null) => {
+    const top = exactY !== null && exactY !== undefined ? `${exactY}%` : position === 'top' ? '22%' : position === 'center' ? '50%' : '78%';
+    const left = exactX !== null && exactX !== undefined ? `${exactX}%` : '50%';
+    text.style.top = top;
+    text.style.left = left;
+    if (positionControl) positionControl.value = position;
+    if (exactY !== null && exactY !== undefined) text.dataset.positionY = String(exactY);
+    else delete text.dataset.positionY;
+    if (exactX !== null && exactX !== undefined) text.dataset.positionX = String(exactX);
+    else delete text.dataset.positionX;
+  };
+  applyPosition(positionControl?.value || 'bottom');
+  let dragging = false;
+  text.addEventListener('pointerdown', event => { dragging = true; text.setPointerCapture?.(event.pointerId); event.preventDefault(); });
+  text.addEventListener('pointermove', event => {
+    if (!dragging) return;
+    const bounds = stage.getBoundingClientRect();
+    const horizontalRatio = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
+    const ratio = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height));
+    text.style.left = `${(horizontalRatio * 100).toFixed(2)}%`;
+    text.style.top = `${(ratio * 100).toFixed(2)}%`;
+    text.dataset.positionX = (horizontalRatio * 100).toFixed(2);
+    text.dataset.positionY = (ratio * 100).toFixed(2);
+  });
+  text.addEventListener('pointerup', () => { dragging = false; });
+  text.addEventListener('pointercancel', () => { dragging = false; });
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => stage.dispatchEvent(new Event('caption-preview-resize'))).observe(stage);
+  return applyPosition;
 }
 function replaceView(element) {
   clearElement(appView);
@@ -889,6 +976,7 @@ async function loadCutSources() {
   cutSuggestions = [];
   selectedCandidateIds.clear();
   try {
+    await loadCaptionStyles();
     const response = await fetch('/api/cut-sources');
     if (!response.ok) throw new Error('fontes indisponíveis');
     const payload = await response.json();
@@ -911,6 +999,53 @@ async function loadCutSources() {
     showToast('Não foi possível carregar os vídeos para corte.');
   }
 }
+async function loadCaptionStyles() {
+  const builtInCaptionStyles = [
+    { style_id: 'clean', name: 'Clean', style: 'clean', font: 'Arial', size: 54, position: 'bottom', stroke_color: 'black', stroke_size: 3 },
+    { style_id: 'bold', name: 'Bold', style: 'bold', font: 'Arial', size: 60, position: 'bottom', stroke_color: 'black', stroke_size: 4 },
+    { style_id: 'highlight', name: 'Highlight', style: 'highlight', font: 'Arial', size: 56, position: 'bottom', stroke_color: 'black', stroke_size: 3, animation: 'karaoke' },
+  ];
+  try {
+    const response = await fetch('/api/caption-styles', { headers: { 'X-Profile-Id': String(activeProfileId) } });
+    if (!response.ok) throw new Error('estilos indisponíveis');
+    const styles = (await response.json()).styles || [];
+    const stylesById = new Map([...builtInCaptionStyles, ...styles].map(style => [style.style_id, style]));
+    captionGallery = [...stylesById.values()];
+    const fontsResponse = await fetch('/api/caption-fonts', { headers: { 'X-Profile-Id': String(activeProfileId) } });
+    if (fontsResponse.ok) captionFonts = [...new Set([...captionFonts, ...((await fontsResponse.json()).fonts || [])])];
+  } catch (error) {
+    captionGallery = builtInCaptionStyles;
+  }
+}
+async function importCaptionStyle() {
+  const input = document.querySelector('#caption-style-file');
+  const file = input?.files?.[0];
+  if (!file) return showToast('Escolha um arquivo JSON de estilo.');
+  try {
+    const payload = JSON.parse(await file.text());
+    const response = await fetch('/api/caption-styles/import', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Profile-Id': String(activeProfileId) }, body: JSON.stringify(payload) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Não foi possível importar o estilo.');
+    await loadCaptionStyles();
+    renderCuts();
+    showToast(`Estilo ${result.style.name} importado.`);
+  } catch (error) { showToast(error.message || 'JSON de estilo inválido.'); }
+}
+async function importCaptionFont() {
+  const input = document.querySelector('#caption-font-file');
+  const file = input?.files?.[0];
+  if (!file) return showToast('Escolha uma fonte TTF, OTF ou TTC.');
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await fetch('/api/caption-fonts/import', { method: 'POST', headers: { 'X-Profile-Id': String(activeProfileId) }, body: formData });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Não foi possível importar a fonte.');
+    await loadCaptionStyles();
+    renderCuts();
+    showToast(`Fonte ${result.font.name} importada.`);
+  } catch (error) { showToast(error.message || 'Fonte inválida.'); }
+}
 async function restoreActiveCutJobs() {
   try {
     const response = await fetch('/api/jobs/active');
@@ -921,7 +1056,7 @@ async function restoreActiveCutJobs() {
       const savedResponse = await fetch(`/api/jobs/${encodeURIComponent(saved.job.id)}`);
       const savedJob = savedResponse.ok ? await savedResponse.json() : null;
       if (isLiveJob(savedJob)) {
-        jobs = [{ ...savedJob, tipo: saved.kind === 'transcription' ? 'transcription' : 'cut' }];
+        jobs = [{ ...savedJob, tipo: saved.kind === 'transcription' ? 'transcription' : saved.job.kind === 'captions' ? 'caption_render' : 'cut', cut_ids: saved.job.cut_ids || saved.job.cutIds }];
       } else {
         forgetActiveJob(saved.job.id);
         if (cutJob?.id === saved.job.id) cutJob = null;
@@ -939,7 +1074,10 @@ async function restoreActiveCutJobs() {
       pollTranscriptionJob();
     }
     if (processing && !cutJob) {
-      cutJob = { id: processing.job_id || processing.id, status: processing.status, progress: processing.progresso ?? processing.progress ?? 0, message: processing.mensagem || processing.message || 'Processamento em andamento', video_id: processing.video_id, perfil_id: processing.perfil_id || activeProfileId };
+      let checkpoint = {};
+      try { checkpoint = typeof processing.checkpoint_json === 'string' ? JSON.parse(processing.checkpoint_json) : (processing.checkpoint_json || {}); } catch (error) { checkpoint = {}; }
+      const isCaptionJob = processing.tipo === 'caption_render' || checkpoint.kind === 'captions';
+      cutJob = { id: processing.job_id || processing.id, kind: isCaptionJob ? 'captions' : processing.tipo, status: processing.status, progress: processing.progresso ?? processing.progress ?? 0, message: processing.mensagem || processing.message || 'Processamento em andamento', video_id: processing.video_id, perfil_id: processing.perfil_id || activeProfileId, started_at: processing.iniciado_em || processing.criado_em, stage: processing.etapa, cut_ids: processing.cut_ids || checkpoint.cut_ids || (checkpoint.cut_id ? [checkpoint.cut_id] : undefined), eta_seconds: processing.eta_seconds, estimated_duration_seconds: processing.estimated_duration_seconds || checkpoint.estimated_duration_seconds };
       pollCutJob();
     }
     if (transcription || processing) renderCuts();
@@ -1300,9 +1438,18 @@ async function pollCutJob() {
     const response = await fetch(`/api/jobs/${cutJob.id}`);
     const payload = await response.json();
     cutJob = { ...cutJob, ...payload };
-    renderCuts();
+    const hasTargetedCuts = Array.isArray(cutJob.cut_ids || cutJob.cutIds) && (cutJob.cut_ids || cutJob.cutIds).length > 0;
+    if (hasTargetedCuts) refreshActiveCutCards();
+    else renderCuts();
     if (payload.status === 'completed') {
       forgetActiveJob(cutJob.id);
+      if (cutJob.kind === 'captions') {
+        await reloadSelectedCutData();
+        cutJob = null;
+        renderCuts();
+        showToast('Legendas geradas.');
+        return;
+      }
       if (cutJob.kind === 'editorial') {
         const editorialVideoId = selectedCutSource?.id;
         await loadCutSources();
@@ -1446,9 +1593,18 @@ async function openRelatedVideoPicker(suggestedId = '') {
     let typeFilter = 'all';
     const filters = createElement('div', { className: 'related-video-filters', role: 'tablist', 'aria-label': 'Filtrar vídeos' });
     const list = createElement('div', { className: 'related-video-list' });
+    const noRelatedId = '__no_related_video__';
     const renderList = () => {
       const query = search.value.trim().toLocaleLowerCase();
       clearElement(list);
+      if (!query && typeFilter === 'all') {
+        const noRelatedItem = createElement('button', { type: 'button', className: `related-video-item related-video-none ${selectedId === noRelatedId ? 'is-selected' : ''}`, 'data-video-id': noRelatedId }, [
+          createElement('span', { className: 'related-video-thumb related-video-none-icon' }, [domIcon('unlink')]),
+          createElement('span', {}, [createElement('strong', { textContent: 'Nenhum vídeo relacionado' }), createElement('small', { textContent: 'Publicar sem vincular outro vídeo' })]),
+        ]);
+        noRelatedItem.addEventListener('click', () => { selectedId = noRelatedId; renderList(); });
+        list.appendChild(noRelatedItem);
+      }
       videos.filter(video => (typeFilter === 'all' || video.tipo === typeFilter) && (!query || String(video.titulo || '').toLocaleLowerCase().includes(query))).forEach(video => {
         const item = createElement('button', { type: 'button', className: `related-video-item ${selectedId === video.video_id ? 'is-selected' : ''}`, 'data-video-id': video.video_id }, [
           createElement('span', { className: 'related-video-thumb' }, [createVideoThumbnail(video, true), domText('b', '', video.tipo === 'short' ? 'S' : 'V')]),
@@ -1510,14 +1666,14 @@ async function openRelatedVideoPicker(suggestedId = '') {
     });
     panel.appendChild(filters);
     panel.appendChild(list);
-    panel.appendChild(createElement('div', { className: 'schedule-modal-actions' }, [domButton('Cancelar', 'x', 'secondary', 'close-related-video'), domButton('OK', 'check', 'primary', 'confirm-related-video')]));
+    panel.appendChild(createElement('div', { className: 'schedule-modal-actions' }, [domButton('Cancelar', 'x', 'secondary', 'close-related-video'), domButton('Confirmar escolha', 'check', 'primary', 'confirm-related-video')]));
     backdrop.appendChild(panel);
     document.body.appendChild(backdrop);
     search.addEventListener('input', renderList);
     panel.addEventListener('click', event => {
       const action = event.target.closest('[data-action]')?.dataset.action;
       if (action === 'close-related-video') finish(null);
-      if (action === 'confirm-related-video') finish(videos.find(video => video.video_id === selectedId) || null);
+      if (action === 'confirm-related-video') finish(selectedId === noRelatedId ? { no_related_video: true } : videos.find(video => video.video_id === selectedId) || null);
       if (action === 'refresh-related-videos') syncChannel();
     });
     backdrop.addEventListener('click', event => { if (event.target === backdrop) finish(null); });
@@ -1532,11 +1688,12 @@ async function openRelatedVideoPicker(suggestedId = '') {
 async function saveRelatedVideoForCuts(cutIds, relatedVideo) {
   if (!relatedVideo) return;
   for (const cutId of cutIds) {
-    const response = await fetch('/api/cuts/related-video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cut_id: cutId, video_id: relatedVideo.video_id, video_title: relatedVideo.titulo }) });
+    const body = relatedVideo.no_related_video ? { cut_id: cutId, no_related_video: true } : { cut_id: cutId, video_id: relatedVideo.video_id, video_title: relatedVideo.titulo };
+    const response = await fetch('/api/cuts/related-video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!response.ok) throw new Error('Não foi possível salvar o vídeo relacionado.');
   }
   await loadNotifications();
-  showToast(`Vídeo relacionado salvo para ${cutIds.length} corte(s).`);
+  showToast(relatedVideo.no_related_video ? `${cutIds.length} corte(s) serão publicados sem vídeo relacionado.` : `Vídeo relacionado salvo para ${cutIds.length} corte(s).`);
 }
 function openScheduleDialog(cutIds, label) {
   const cuts = allReviewCuts().filter(cut => cutIds.includes(Number(cut.cut_id || cut.id)));
@@ -1563,6 +1720,13 @@ function openScheduleDialog(cutIds, label) {
       createElement('span', {}, [domText('strong', '', 'Definir data e horário'), domText('small', '', 'Aplicar o mesmo horário aos cortes selecionados')]),
     ]));
     panel.appendChild(mode);
+    const localDateTime = new Date(Date.now() + 60 * 60 * 1000);
+    localDateTime.setMinutes(Math.ceil(localDateTime.getMinutes() / 30) * 30, 0, 0);
+    const localDateTimeValue = new Date(localDateTime.getTime() - localDateTime.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    const recommendedFields = createElement('div', { className: 'schedule-manual-fields' }, [
+      createElement('label', {}, [domText('span', '', 'Considerar melhores horários a partir de'), createElement('input', { type: 'datetime-local', name: 'schedule-start-at', min: localDateTimeValue, value: localDateTimeValue })]),
+    ]);
+    panel.appendChild(recommendedFields);
     const manualFields = createElement('div', { className: 'schedule-manual-fields', hidden: 'hidden' }, [
       createElement('label', {}, [domText('span', '', 'Data'), createElement('input', { type: 'date', name: 'schedule-date', min: new Date().toISOString().slice(0, 10) })]),
       createElement('label', {}, [domText('span', '', 'Horário'), createElement('input', { type: 'time', name: 'schedule-time', value: '17:30' })]),
@@ -1581,6 +1745,7 @@ function openScheduleDialog(cutIds, label) {
     panel.querySelectorAll('input[name="schedule-mode"]').forEach(input => input.addEventListener('change', event => {
       const isManual = event.target.value === 'manual';
       manualFields.hidden = !isManual;
+      recommendedFields.hidden = isManual;
       panel.querySelectorAll('.schedule-mode-option').forEach(option => option.classList.toggle('is-active', option.querySelector('input') === event.target));
     }));
     backdrop.addEventListener('click', event => { if (event.target === backdrop) finish(null); });
@@ -1592,8 +1757,10 @@ function openScheduleDialog(cutIds, label) {
         const isManual = panel.querySelector('input[name="schedule-mode"]:checked')?.value === 'manual';
         const date = panel.querySelector('[name="schedule-date"]')?.value || '';
         const time = panel.querySelector('[name="schedule-time"]')?.value || '';
+        const startAt = panel.querySelector('[name="schedule-start-at"]')?.value || '';
         if (isManual && (!date || !time)) return showToast('Escolha a data e o horário para continuar.');
-        finish({ ...(isManual ? { date, time } : {}), related_video: relatedVideo });
+        if (!isManual && !startAt) return showToast('Escolha a data e hora inicial para a recomendação da IA.');
+        finish({ ...(isManual ? { date, time } : { start_at: startAt }), related_video: relatedVideo });
       }
     });
   });
@@ -1624,7 +1791,7 @@ async function scheduleCuts(cutIds, label = 'cortes selecionados', automatic = f
     const response = await fetch('/api/cuts/schedule-bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cut_ids: ids, ...schedule }) });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Não foi possível agendar os cortes.');
-    cutJob = { id: payload.job_id, status: 'queued', progress: 0, message: 'Publicação na fila' };
+    cutJob = { id: payload.job_id, kind: 'publish', status: 'queued', progress: 0, message: 'Publicação na fila', cut_ids: ids };
     rememberActiveJob('cut', cutJob);
     showToast(`${label} enviados para publicação. Acompanhe a confirmação na Central.`);
     renderCuts();
@@ -1648,7 +1815,7 @@ async function postSelectedCuts() {
     const response = await fetch('/api/cuts/publish-now-bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cut_ids: ids }) });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Não foi possível iniciar a postagem.');
-    cutJob = { id: payload.job_id, status: 'queued', progress: 0, message: 'Postagem imediata na fila' };
+    cutJob = { id: payload.job_id, kind: 'publish-now', status: 'queued', progress: 0, message: 'Postagem imediata na fila', cut_ids: ids };
     rememberActiveJob('cut', cutJob);
     selectedCandidateIds.clear();
     renderCuts();
@@ -1676,6 +1843,9 @@ async function saveCutMetadata(cutId) {
 }
 async function regenerateCutMetadata(cutId, field, button) {
   const label = field === 'title' ? 'título' : 'descrição';
+  const operation = { status: 'running', progress: 0, message: `Gerando ${label}...`, started_at: Date.now(), cancelable: false };
+  activeCutOperations.set(cutId, operation);
+  renderCuts();
   if (button) { button.disabled = true; button.classList.add('is-loading'); }
   showToast(`Gerando ${label} com a transcrição do corte...`);
   try {
@@ -1690,7 +1860,11 @@ async function regenerateCutMetadata(cutId, field, button) {
     if (!target) renderCuts();
     showToast(`${label[0].toUpperCase()}${label.slice(1)} regenerado.`);
   } catch (error) { showToast(error.message); }
-  finally { if (button) { button.disabled = false; button.classList.remove('is-loading'); } }
+  finally {
+    activeCutOperations.delete(cutId);
+    if (button) { button.disabled = false; button.classList.remove('is-loading'); }
+    renderCuts();
+  }
 }
 async function deleteSelectedCuts() {
   const ids = [...selectedCandidateIds].filter(Boolean);
@@ -1742,6 +1916,12 @@ function updateCycleSelectionButtons() {
     clearElement(button);
     button.append(domIcon(selected ? 'check-check' : 'check-check'), selected ? 'Desselecionar todos' : 'Selecionar todos');
   });
+  document.querySelectorAll('[data-action="caption-cycle-cuts"]').forEach(button => {
+    const cycleIds = button.dataset.allCutIds.split(',').map(Number).filter(Boolean);
+    const selectedIds = cycleIds.filter(cutId => selectedCandidateIds.has(cutId));
+    button.dataset.cutIds = selectedIds.join(',');
+    button.hidden = selectedIds.length < 2;
+  });
   refreshIcons();
 }
 function toggleCycleCuts(cuts) {
@@ -1764,7 +1944,7 @@ async function renderSelectedCuts() {
     const response = await fetch('/api/cuts/render-selected', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cut_ids: cutIds }) });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Não foi possível iniciar a renderização.');
-    cutJob = { id: payload.job_id, status: 'queued', progress: 0, message: 'Renderização aprovada na fila' };
+    cutJob = { id: payload.job_id, status: 'queued', progress: 0, message: 'Renderização aprovada na fila', cut_ids: cutIds };
     rememberActiveJob('cut', cutJob);
     renderCuts();
     pollCutJob();
@@ -1776,23 +1956,276 @@ async function renderSingleCut(cutId) {
   selectedCandidateIds.add(cutId);
   await renderSelectedCuts();
 }
+function openCaptionDialog(cut, selectedCuts = [cut]) {
+  const modal = createElement('div', { className: 'cut-modal-backdrop caption-modal-backdrop' });
+  const panel = createElement('section', { className: 'cut-modal cut-metadata-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'caption-modal-title' });
+  const availableCaptionStyles = captionGallery.length ? captionGallery : [
+    { style_id: 'clean', name: 'Clean', style: 'clean', font: 'Arial', size: 54, position: 'bottom', stroke_color: 'black', stroke_size: 3 },
+    { style_id: 'bold', name: 'Bold', style: 'bold', font: 'Arial', size: 60, position: 'bottom', stroke_color: 'black', stroke_size: 4 },
+    { style_id: 'highlight', name: 'Highlight', style: 'highlight', font: 'Arial', size: 56, position: 'bottom', stroke_color: 'black', stroke_size: 3, animation: 'karaoke' },
+  ];
+  const style = createElement('select', { id: 'caption-style-select' }, [
+    ...availableCaptionStyles.map(item => createElement('option', { value: item.style_id, selected: item.style_id === captionDefaults.style ? 'true' : null }, captionStyleLabel(item))),
+  ]);
+  const font = createElement('select', { id: 'caption-font-select' }, captionFonts.map(name => createElement('option', { value: name, selected: captionDefaults.font === name ? 'true' : null }, name)));
+  const size = createElement('input', { id: 'caption-size-select', type: 'range', min: '32', max: '160', step: '1', value: String(captionDefaults.size), 'aria-label': 'Tamanho da legenda' });
+  const sizeNumber = createElement('input', { id: 'caption-size-number', type: 'number', min: '32', max: '160', step: '1', value: String(captionDefaults.size), 'aria-label': 'Tamanho da legenda em pixels' });
+  const sizeValue = domText('output', 'caption-size-value', `${captionDefaults.size}px`);
+  const singleLine = createElement('input', { id: 'caption-single-line-select', type: 'checkbox', checked: captionDefaults.singleLine ? 'true' : null, 'aria-label': 'Usar uma linha' });
+  const position = createElement('select', { id: 'caption-position-select' }, [
+    createElement('option', { value: 'bottom', selected: captionDefaults.position === 'bottom' ? 'true' : null }, 'Embaixo'),
+    createElement('option', { value: 'center', selected: captionDefaults.position === 'center' ? 'true' : null }, 'Centro'),
+    createElement('option', { value: 'top', selected: captionDefaults.position === 'top' ? 'true' : null }, 'Em cima'),
+  ]);
+  const strokeColor = createElement('select', { id: 'caption-stroke-color-select' }, [
+    ['#000000', 'Preto'], ['#FFFFFF', 'Branco'], ['#FF4B5B', 'Coral'],
+  ].map(([value, label]) => createElement('option', { value, selected: captionDefaults.strokeColor === value ? 'true' : null }, label)));
+  const strokeSize = createElement('select', { id: 'caption-stroke-size-select' }, [0, 1, 2, 3, 4, 6, 8].map(value => createElement('option', { value: String(value), selected: value === captionDefaults.strokeSize ? 'true' : null }, `${value}px`)));
+  const primaryColorControl = createCaptionColorControl({ id: 'caption-primary-color-select', type: 'color', value: captionDefaults.primaryColor });
+  const highlightColorControl = createCaptionColorControl({ id: 'caption-highlight-color-select', type: 'color', value: captionDefaults.highlightColor });
+  const backgroundColorControl = createCaptionColorControl({ id: 'caption-background-color-select', type: 'color', value: captionDefaults.backgroundColor });
+  const primaryColor = primaryColorControl.input;
+  const highlightColor = highlightColorControl.input;
+  const backgroundColor = backgroundColorControl.input;
+  const backgroundAlpha = createElement('input', { id: 'caption-background-alpha-select', type: 'range', min: '0', max: '100', step: '5', value: String(captionDefaults.backgroundAlpha) });
+  const backgroundAlphaNumber = createElement('input', { id: 'caption-background-alpha-number', type: 'number', min: '0', max: '100', step: '1', value: String(captionDefaults.backgroundAlpha), 'aria-label': 'Opacidade do fundo em porcentagem' });
+  const previewStage = createElement('div', { className: 'caption-preview-stage', role: 'img', 'aria-label': 'Preview da legenda' });
+  const previewText = domText('span', 'caption-preview-text', 'A cidade muda quando a gente participa.');
+  previewStage.appendChild(previewText);
+  const applyPreviewPosition = setupCaptionPreview(previewStage, previewText, cut, position);
+  const previewStyles = {
+    clean: { color: '#ffffff', weight: '400', shadow: '0 2px 3px rgba(0, 0, 0, .95)', transform: 'none' },
+    bold: { color: '#ffffff', weight: '800', shadow: '0 3px 0 #101010, 2px 0 0 #101010, -2px 0 0 #101010, 0 -2px 0 #101010', transform: 'none' },
+    highlight: { color: '#ffe45c', weight: '800', shadow: '0 3px 0 #101010, 2px 0 0 #101010, -2px 0 0 #101010, 0 -2px 0 #101010', transform: 'none' },
+  };
+  const strokeColors = { black: '#000000', white: '#ffffff', coral: '#ff4b5b' };
+  const updatePreview = () => {
+    const selectedStyle = availableCaptionStyles.find(item => item.style_id === style.value);
+    const preset = previewStyles[selectedStyle?.style || style.value] || previewStyles.clean;
+    previewText.style.fontFamily = `'${font.value}', sans-serif`;
+    const scale = captionPreviewScale(previewStage);
+    previewText.style.fontSize = `${Number(size.value) * scale}px`;
+    fitSingleLineCaption(previewStage, previewText, Number(size.value) * scale);
+    sizeNumber.value = size.value;
+    backgroundAlphaNumber.value = backgroundAlpha.value;
+    sizeValue.textContent = `${size.value}px`;
+    previewText.style.fontWeight = preset.weight;
+    previewText.style.whiteSpace = singleLine.checked ? 'nowrap' : 'normal';
+    previewText.style.maxWidth = singleLine.checked ? 'none' : '88%';
+    previewText.style.color = primaryColor.value || preset.color;
+    const stroke = Number(strokeSize.value);
+    const strokeColorValue = captionColorValue(strokeColor.value);
+    const scaledStroke = stroke * scale;
+    const scaledShadow = scaleCaptionShadow(preset.shadow, scale);
+    previewText.style.textShadow = stroke ? `0 ${scaledStroke}px 0 ${strokeColorValue}, ${scaledStroke}px 0 0 ${strokeColorValue}, -${scaledStroke}px 0 0 ${strokeColorValue}, 0 -${scaledStroke}px 0 ${strokeColorValue}, ${scaledShadow}` : scaledShadow;
+    applyPreviewPosition(position.value, previewText.dataset.positionY, previewText.dataset.positionX);
+    previewStage.style.justifyContent = 'center';
+    previewStage.style.alignItems = 'center';
+    previewText.dataset.style = style.value;
+  };
+  style.addEventListener('change', () => {
+    const selectedStyle = availableCaptionStyles.find(item => item.style_id === style.value);
+    if (selectedStyle) {
+      font.value = selectedStyle.font;
+      size.value = String(Math.min(160, selectedStyle.size));
+      singleLine.checked = Boolean(selectedStyle.uma_linha);
+      position.value = selectedStyle.position;
+      strokeColor.value = captionColorValue(selectedStyle.stroke_color);
+      strokeSize.value = String(selectedStyle.stroke_size);
+      primaryColor.value = selectedStyle.primary_color || primaryColor.value;
+      highlightColor.value = selectedStyle.highlight_color || highlightColor.value;
+      backgroundColor.value = selectedStyle.background_color || backgroundColor.value;
+      backgroundAlpha.value = String(selectedStyle.background_alpha ?? backgroundAlpha.value);
+    }
+    updatePreview();
+  });
+  [style, font, size, sizeNumber, position, singleLine, strokeColor, strokeSize, primaryColor, highlightColor, backgroundColor, backgroundAlpha, backgroundAlphaNumber].forEach(control => control.addEventListener('change', updatePreview));
+  size.addEventListener('input', updatePreview);
+  sizeNumber.addEventListener('input', () => { size.value = sizeNumber.value; updatePreview(); });
+  backgroundAlphaNumber.addEventListener('input', () => { backgroundAlpha.value = backgroundAlphaNumber.value; updatePreview(); });
+  backgroundAlpha.addEventListener('input', () => { backgroundAlphaNumber.value = backgroundAlpha.value; updatePreview(); });
+  previewStage.addEventListener('caption-preview-resize', updatePreview);
+  position.addEventListener('change', () => { delete previewText.dataset.positionX; delete previewText.dataset.positionY; updatePreview(); });
+  updatePreview();
+  const close = domButton('Fechar', 'x', 'secondary', 'close-caption-dialog');
+  panel.appendChild(createElement('div', { className: 'cut-modal-header' }, [domText('h2', '', 'Gerar legendas'), close]));
+  panel.appendChild(domText('p', 'schedule-modal-lead', 'O vídeo original será preservado e uma nova versão será criada.'));
+  const captionQuickSettings = createElement('div', { className: 'caption-settings-grid caption-quick-settings' }, [
+    createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Estilo'), style]),
+    createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Tamanho'), size, createElement('div', { className: 'caption-number-control' }, [sizeNumber, sizeValue])]),
+    createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Posição'), position]),
+    createElement('label', { className: 'cut-metadata-field caption-checkbox-field' }, [singleLine, domText('span', '', 'Uma linha')]),
+    createElement('div', { className: 'caption-position-actions' }, [domButton('Centralizar legenda', 'crosshair', 'secondary', 'caption-center-preview'), domButton('Centralizar horizontalmente', 'move-horizontal', 'secondary', 'caption-center-horizontal')]),
+  ]);
+  const captionAdvancedSettings = createElement('details', { className: 'caption-advanced-settings' }, [
+    createElement('summary', {}, [domText('span', '', 'Ajustes avançados'), domText('small', '', 'Fonte, contorno e cores')]),
+    createElement('div', { className: 'caption-settings-grid' }, [
+      createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Fonte'), font]),
+    createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Cor do stroke'), strokeColor]),
+    createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Espessura do stroke'), strokeSize]),
+    createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Cor base'), primaryColorControl.control]),
+    createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Cor destaque'), highlightColorControl.control]),
+    createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Cor do fundo'), backgroundColorControl.control]),
+    createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Opacidade do fundo'), backgroundAlpha, createElement('div', { className: 'caption-number-control' }, [backgroundAlphaNumber, domText('span', '', '%')])]),
+    ]),
+  ]);
+  panel.appendChild(createElement('div', { className: 'caption-preview-block' }, [domText('strong', '', 'Veja como vai ficar'), previewStage]));
+  panel.appendChild(captionQuickSettings);
+  panel.appendChild(captionAdvancedSettings);
+  panel.appendChild(createElement('div', { className: 'caption-transcript-action' }, [domButton('Ler transcrição do corte', 'file-text', 'secondary', 'read-cut-transcript', { 'data-cut-id': Number(cut.cut_id || cut.id) })]));
+  const cutIds = selectedCuts.map(item => Number(item.cut_id || item.id)).filter(Boolean);
+  panel.appendChild(createElement('div', { className: 'schedule-modal-actions' }, [domButton('Cancelar', 'x', 'secondary', 'close-caption-dialog'), domButton(cutIds.length > 1 ? `Gerar ${cutIds.length} legendas` : 'Gerar legendas', 'captions', 'lime', 'generate-captions', { 'data-cut-ids': cutIds.join(',') })]));
+  modal.appendChild(panel);
+  document.body.appendChild(modal);
+  modal.addEventListener('click', event => { if (event.target === modal) modal.remove(); });
+}
+function formatCutTranscriptTime(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+async function openCutTranscriptReader(cut) {
+  document.querySelector('.cut-transcript-reader-backdrop')?.remove();
+  const modal = createElement('div', { className: 'cut-modal-backdrop cut-transcript-reader-backdrop' });
+  const panel = createElement('section', { className: 'cut-modal cut-transcript-reader', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'cut-transcript-reader-title' });
+  const close = domButton('Fechar', 'x', 'secondary', 'close-cut-transcript');
+  const content = createElement('div', { className: 'cut-transcript-reader-content' }, [domText('p', 'empty-state', 'Carregando transcrição...')]);
+  const saveButton = domButton('Salvar e voltar ao ajuste', 'save', 'lime', 'save-cut-transcript', { 'data-cut-id': Number(cut.cut_id || cut.id) });
+  panel.append(createElement('div', { className: 'cut-modal-header' }, [domText('h2', '', 'Transcrição do corte'), close]), domText('p', 'schedule-modal-lead', 'Corrija as palavras neste trecho e salve antes de gerar a legenda.'), content, createElement('div', { className: 'schedule-modal-actions' }, [domButton('Fechar', 'x', 'secondary', 'close-cut-transcript'), saveButton]));
+  modal.appendChild(panel);
+  document.body.appendChild(modal);
+  const finish = () => modal.remove();
+  modal.addEventListener('click', event => {
+    if (event.target === modal || event.target.closest('[data-action="close-cut-transcript"]')) finish();
+  });
+  try {
+    const [transcriptionResponse, editedResponse] = await Promise.all([
+      fetch(`/api/transcription?video_id=${encodeURIComponent(cut.video_id)}`, { headers: { 'X-Profile-Id': String(activeProfileId) } }),
+      fetch(`/api/cuts/caption-transcript?cut_id=${encodeURIComponent(Number(cut.cut_id || cut.id))}`, { headers: { 'X-Profile-Id': String(activeProfileId) } }),
+    ]);
+    const payload = await transcriptionResponse.json();
+    const editedPayload = editedResponse.ok ? await editedResponse.json() : { segments: [] };
+    if (!transcriptionResponse.ok) throw new Error(payload.error || 'Não foi possível carregar a transcrição.');
+    const start = Number(cut.inicio_segundos ?? cut.inicio ?? 0);
+    const end = Number(cut.fim_segundos ?? cut.fim ?? Number.POSITIVE_INFINITY);
+    const segments = (payload.segments || []).filter(segment => Number(segment.fim) > start && Number(segment.inicio) < end);
+    clearElement(content);
+    if (!segments.length) {
+      const message = String(payload.text || '').trim()
+        ? 'A transcrição existe, mas não possui segmentos temporizados para este corte. Refaça a transcrição ou envie um SRT para editar por trecho.'
+        : 'Este vídeo não possui uma transcrição disponível. Gere a transcrição ou envie um arquivo SRT antes de ajustar a legenda.';
+      content.appendChild(domText('p', 'empty-state', message));
+      return;
+    }
+    const editedByIndex = new Map((editedPayload.segments || []).map(segment => [Number(segment.indice), segment.texto]));
+    segments.forEach((segment, index) => {
+      const segmentIndex = Number(segment.indice ?? index);
+      const relativeStart = Math.max(0, Number(segment.inicio) - start);
+      const relativeEnd = Math.max(relativeStart, Number(segment.fim) - start);
+      content.appendChild(createElement('article', { className: 'cut-transcript-line' }, [
+        domText('time', '', `${formatCutTranscriptTime(relativeStart)} - ${formatCutTranscriptTime(relativeEnd)}`),
+        createElement('textarea', { className: 'cut-transcript-edit', 'data-segment-index': String(segmentIndex), rows: '2', maxlength: '2000' }, editedByIndex.has(segmentIndex) ? editedByIndex.get(segmentIndex) : (segment.texto || '')),
+      ]));
+    });
+    saveButton.addEventListener('click', async () => {
+      const segmentsToSave = [...content.querySelectorAll('[data-segment-index]')].map(input => ({ indice: Number(input.dataset.segmentIndex), texto: input.value }));
+      saveButton.disabled = true;
+      try {
+        const response = await fetch('/api/cuts/caption-transcript', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Profile-Id': String(activeProfileId) }, body: JSON.stringify({ cut_id: Number(cut.cut_id || cut.id), segments: segmentsToSave }) });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Não foi possível salvar a transcrição.');
+        showToast('Transcrição do corte salva. Ela será usada na próxima geração de legenda.');
+        finish();
+      } catch (error) { showToast(error.message); }
+      finally { saveButton.disabled = false; }
+    });
+  } catch (error) {
+    clearElement(content);
+    content.appendChild(domText('p', 'empty-state', error.message));
+  }
+}
+async function generateCutCaptions(cutId, options, modal) {
+  try {
+    const response = await fetch('/api/cuts/generate-captions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cut_id: cutId, ...options }) });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível iniciar a geração de legendas.');
+    modal?.remove();
+    cutJob = { id: payload.job_id, kind: 'captions', status: 'queued', progress: 0, message: 'Legendas na fila', started_at: Date.now(), perfil_id: activeProfileId, cut_ids: [cutId], estimated_duration_seconds: payload.estimated_duration_seconds };
+    rememberActiveJob('cut', cutJob);
+    renderCuts();
+    pollCutJob();
+  } catch (error) { showToast(error.message); }
+}
+async function generateCaptionsForCuts(cutIds, options, modal) {
+  const ids = [...new Set(cutIds.map(Number).filter(Boolean))];
+  if (ids.length < 2) return generateCutCaptions(ids[0], options, modal);
+  try {
+    const settled = await Promise.allSettled(ids.map(async cutId => {
+      const response = await fetch('/api/cuts/generate-captions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cut_id: cutId, ...options }) });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `Não foi possível iniciar a legenda do corte ${cutId}.`);
+      return { cutId, payload };
+    }));
+    const results = settled.filter(item => item.status === 'fulfilled').map(item => item.value);
+    const failures = settled.filter(item => item.status === 'rejected');
+    if (!results.length) throw new Error(failures[0]?.reason?.message || 'Não foi possível iniciar as legendas.');
+    modal?.remove();
+    results.forEach(({ cutId, payload }) => {
+      activeCutOperations.set(cutId, { id: payload.job_id, kind: 'captions', status: 'queued', progress: 0, message: 'Legendas na fila', started_at: Date.now(), cut_ids: [cutId], estimated_duration_seconds: payload.estimated_duration_seconds });
+      captionBatchJobs.set(payload.job_id, cutId);
+    });
+    renderCuts();
+    pollCaptionBatchJobs();
+    showToast(`${results.length} legendas enviadas para processamento${failures.length ? `; ${failures.length} não iniciada(s)` : ''}.`);
+  } catch (error) { showToast(error.message); }
+}
+let captionBatchPolling = false;
+async function pollCaptionBatchJobs() {
+  if (captionBatchPolling || !captionBatchJobs.size) return;
+  captionBatchPolling = true;
+  try {
+    const completed = [];
+    for (const [jobId, cutId] of captionBatchJobs) {
+      const response = await fetch(`/api/jobs/${jobId}`);
+      if (!response.ok) continue;
+      const payload = await response.json();
+      const operation = activeCutOperations.get(cutId) || {};
+      activeCutOperations.set(cutId, { ...operation, ...payload, id: jobId, kind: 'captions', cut_ids: [cutId] });
+      if (['completed', 'failed', 'interrupted', 'cancelled'].includes(payload.status)) completed.push({ jobId, cutId, status: payload.status });
+    }
+    completed.forEach(({ jobId, cutId }) => { captionBatchJobs.delete(jobId); activeCutOperations.delete(cutId); });
+    refreshActiveCutCards();
+    if (completed.some(item => item.status === 'completed')) await reloadSelectedCutData();
+    if (captionBatchJobs.size) setTimeout(pollCaptionBatchJobs, 1000);
+    else renderCuts();
+  } catch (error) {
+    if (captionBatchJobs.size) setTimeout(pollCaptionBatchJobs, 1000);
+  } finally { captionBatchPolling = false; }
+}
 function renderCutCard(cut, options = {}) {
   const cutId = Number(cut.cut_id || cut.id);
+  const activeOperation = activeCutOperationFor(cutId);
+  if (activeOperation) return renderCutProcessingCard(cut, activeOperation, options);
   const status = cut.status || 'candidato';
   const outputAvailable = status === 'concluido' && (cut.output_path || cut.caminho_saida);
   const canSelect = ['candidato', 'concluido', 'selecionado'].includes(status);
   const score = Math.max(0, Math.min(100, Number(cut.score_vaca_roxa || 0)));
   const title = cut.titulo || 'Corte editorial';
-  const card = createElement('article', { className: `cut-card ${options.candidate ? 'candidate-row' : ''}` });
+  const captionReady = cut.legenda_status === 'concluido' && cut.legenda_caminho;
+  const card = createElement('article', { className: `cut-card ${options.candidate ? 'candidate-row' : ''}`, 'data-cut-id': String(cutId) });
   const header = createElement('div', { className: 'cut-card-header' }, [domText('span', 'cut-status', options.statusLabel || (status === 'concluido' ? 'Renderizado' : 'Para revisar'))]);
   const scoreBadge = domText('span', 'score-meter', score.toFixed(0));
   scoreBadge.style.setProperty('--cut-score', String(score));
   const preview = createElement('div', { className: 'cut-preview' }, [scoreBadge]);
   if (outputAvailable) {
     const video = createElement('video', { className: 'cut-player', controls: 'true', preload: 'metadata' });
-    video.src = `/api/cuts/file?id=${encodeURIComponent(cutId)}&perfil_id=${encodeURIComponent(activeProfileId)}`;
+    const mediaVersion = captionReady ? (cut.legenda_caminho || cut.atualizado_em) : (cut.caminho_saida || cut.atualizado_em);
+    video.src = `/api/cuts/file?id=${encodeURIComponent(cutId)}&captions=${captionReady ? '1' : '0'}&perfil_id=${encodeURIComponent(activeProfileId)}&v=${encodeURIComponent(mediaVersion || '')}`;
     video.setAttribute('aria-label', `Prévia de ${cut.titulo || 'corte'}`);
     preview.insertBefore(video, scoreBadge);
+    const previewButton = domButton('', 'maximize-2', 'secondary', 'fullscreen-cut-preview', { 'data-cut-id': cutId, title: 'Ver corte em tela cheia' });
+    previewButton.classList.add('cut-preview-expand');
+    previewButton.setAttribute('aria-label', 'Ver corte em tela cheia');
+    preview.appendChild(previewButton);
   } else if (status === 'falhou') {
     preview.appendChild(domText('p', 'cut-error', cut.erro || cut.error || 'A renderização falhou.'));
   }
@@ -1803,12 +2236,19 @@ function renderCutCard(cut, options = {}) {
   ]);
   if (canSelect) {
     const selected = selectedCandidateIds.has(cutId);
-    const selectButton = domButton(selected ? 'Selecionado' : 'Postar', selected ? 'circle-check' : 'circle', selected ? 'selected' : 'secondary', 'candidate-toggle-button', { 'data-cut-id': cutId, 'aria-pressed': String(selected), title: selected ? 'Remover da seleção para postagem' : 'Selecionar para postagem' });
+    const selectButton = domButton(selected ? 'Selecionado' : 'Selecionar', selected ? 'circle-check' : 'circle', selected ? 'selected' : 'secondary', 'candidate-toggle-button', { 'data-cut-id': cutId, 'aria-pressed': String(selected), title: selected ? 'Remover da seleção para postagem' : 'Selecionar para postagem' });
     selectButton.classList.add('cut-select-toggle');
     selectButton.setAttribute('aria-label', selected ? 'Remover da seleção para postagem' : 'Selecionar para postagem');
     actions.appendChild(selectButton);
   }
   if (canSelect && !outputAvailable) actions.appendChild(domButton('Renderizar', 'scissors', 'secondary', 'render-cut', { 'data-cut-id': cutId }));
+  if (cut.arquivo_origem || outputAvailable) actions.appendChild(domButton(captionReady ? 'Refazer legendas' : 'Gerar legendas', 'captions', 'secondary', 'caption-cut', { 'data-cut-id': cutId }));
+  if (captionReady) {
+    const captionLink = setSafeLink(createElement('a', { className: 'button secondary' }), `/api/cuts/file?id=${encodeURIComponent(cutId)}&captions=1&perfil_id=${encodeURIComponent(activeProfileId)}`);
+    captionLink.setAttribute('download', `${title.replace(/[^a-z0-9]+/gi, '_')}_legendas.mp4`);
+    captionLink.append(domIcon('download'), ' Baixar legendado');
+    actions.appendChild(captionLink);
+  }
   if (outputAvailable) {
     const download = setSafeLink(createElement('a', { className: 'button secondary' }), `/api/cuts/file?id=${encodeURIComponent(cutId)}&perfil_id=${encodeURIComponent(activeProfileId)}`);
     download.setAttribute('download', `${title.replace(/[^a-z0-9]+/gi, '_')}.mp4`);
@@ -1823,6 +2263,53 @@ function renderCutCard(cut, options = {}) {
   ]);
   card.append(header, domText('h3', 'cut-title', title), preview, publicationDetails, actions);
   return card;
+}
+function openCutPreview(cut) {
+  const cutId = Number(cut.cut_id || cut.id);
+  const captionReady = cut.legenda_status === 'concluido' && cut.legenda_caminho;
+  document.querySelectorAll('video').forEach(video => video.pause());
+  document.querySelector('.cut-preview-backdrop')?.remove();
+  const modal = createElement('div', { className: 'cut-modal-backdrop cut-preview-backdrop' });
+  const panel = createElement('section', { className: 'cut-modal cut-preview-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'cut-preview-title' });
+  const close = domButton('Fechar', 'x', 'secondary', 'close-cut-preview');
+  const video = createElement('video', { className: 'cut-preview-full', controls: 'true', preload: 'metadata', playsinline: 'true' });
+  const mediaVersion = captionReady ? (cut.legenda_caminho || cut.atualizado_em) : (cut.caminho_saida || cut.atualizado_em);
+  video.src = `/api/cuts/file?id=${encodeURIComponent(cutId)}&captions=${captionReady ? '1' : '0'}&perfil_id=${encodeURIComponent(activeProfileId)}&v=${encodeURIComponent(mediaVersion || '')}`;
+  video.setAttribute('aria-label', `Corte em tamanho real: ${cut.titulo || 'corte'}`);
+  panel.append(createElement('div', { className: 'cut-modal-header' }, [domText('h2', '', cut.titulo || 'Corte'), close]), video);
+  modal.appendChild(panel);
+  document.body.appendChild(modal);
+  modal.addEventListener('click', event => { if (event.target === modal) modal.remove(); });
+}
+function activeCutOperationFor(cutId) {
+  const localOperation = activeCutOperations.get(Number(cutId));
+  if (localOperation) return localOperation;
+  if (!isLiveJob(cutJob)) return null;
+  const activeIds = cutJob.cut_ids || cutJob.cutIds || [];
+  return activeIds.map(Number).includes(Number(cutId)) ? cutJob : null;
+}
+function renderCutProcessingCard(cut, operation, options = {}) {
+  const cutId = Number(cut.cut_id || cut.id);
+  const title = cut.titulo || 'Corte editorial';
+  const card = createElement('article', { className: `cut-card cut-card-processing ${options.candidate ? 'candidate-row' : ''}`, 'data-cut-id': String(cutId) });
+  card.append(
+    createElement('div', { className: 'cut-card-header' }, [domText('span', 'cut-status', 'Processando')]),
+    domText('h3', 'cut-title', title),
+    createElement('div', { className: 'cut-processing-stage' }, [domIcon('loader-circle'), domText('span', '', operation.message || 'Processando corte')]),
+    renderJobProgress(operation),
+  );
+  return card;
+}
+function refreshActiveCutCards() {
+  const activeIds = new Set((cutJob?.cut_ids || cutJob?.cutIds || []).map(Number));
+  activeCutOperations.forEach((operation, cutId) => activeIds.add(Number(cutId)));
+  activeIds.forEach(cutId => {
+    const cut = [...persistedCuts, ...cutSuggestions].find(item => Number(item.cut_id || item.id) === cutId);
+    const currentCard = document.querySelector(`article[data-cut-id="${cutId}"]`);
+    if (!cut || !currentCard) return;
+    currentCard.replaceWith(renderCutCard(cut, { candidate: currentCard.classList.contains('candidate-row') }));
+  });
+  refreshIcons();
 }
 function publicationDescription(cut) {
   const savedDescription = String(cut.descricao_publicacao || '').trim();
@@ -1854,6 +2341,21 @@ async function deleteCutCycle(videoId, roundName) {
     await reloadSelectedCutData();
     renderCuts();
     showToast(`${payload.deleted} cortes excluídos.`);
+  } catch (error) { showToast(error.message); }
+}
+async function replaceCycleMetadata(jobId, count) {
+  const source = window.prompt('Qual palavra ou expressão deve ser substituída?', 'Varenga')?.trim() || '';
+  if (!source) return;
+  const replacement = window.prompt(`Por qual texto substituir “${source}”?`, 'Alvarenga')?.trim() || '';
+  if (!replacement) return;
+  if (!window.confirm(`Substituir “${source}” por “${replacement}” no título e na descrição dos ${count} cortes deste ciclo?`)) return;
+  try {
+    const response = await fetch('/api/cuts/replace-cycle-metadata', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ job_id: jobId, source, replacement }) });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Não foi possível substituir os metadados do ciclo.');
+    await reloadSelectedCutData();
+    renderCuts();
+    showToast(`${payload.occurrences} ocorrência(s) substituída(s) em ${payload.cuts} corte(s).`);
   } catch (error) { showToast(error.message); }
 }
 function reviewCutGroups(cuts) {
@@ -1888,7 +2390,8 @@ function renderReviewGroups(cuts, toggleAction = 'candidate-toggle') {
       const cycleIds = cycleCuts.map(cut => Number(cut.cut_id || cut.id)).filter(Boolean);
       const cycleHeader = createElement('summary', { className: 'cut-cycle-summary' }, [domText('strong', '', `Ciclo ${cycleIndex + 1}`), domText('span', '', `${cycleCuts.length} cortes`)]);
       const cycleSelected = cycleIds.length > 0 && cycleIds.every(cutId => selectedCandidateIds.has(cutId));
-      const cycleActions = createElement('div', { className: 'cut-cycle-actions' }, [domButton(cycleSelected ? 'Desselecionar todos' : 'Selecionar todos', 'check-check', 'secondary', 'select-cycle-cuts', { 'data-cut-ids': cycleIds.join(','), 'aria-pressed': String(cycleSelected), 'aria-label': cycleSelected ? 'Desselecionar todos deste ciclo' : 'Selecionar todos deste ciclo' }), domButton('Agendar ciclo', 'calendar-plus', 'secondary', 'schedule-cycle-cuts', { 'data-cut-ids': cycleIds.join(',') }), domButton('Excluir ciclo', 'trash-2', 'danger', 'delete-cut-cycle', { 'data-video-id': cycleCuts[0]?.video_id || '', 'data-round-name': cycleName })]);
+      const selectedCycleIds = cycleIds.filter(cutId => selectedCandidateIds.has(cutId));
+      const cycleActions = createElement('div', { className: 'cut-cycle-actions' }, [domButton(cycleSelected ? 'Desselecionar todos' : 'Selecionar todos', 'check-check', 'secondary', 'select-cycle-cuts', { 'data-cut-ids': cycleIds.join(','), 'aria-pressed': String(cycleSelected), 'aria-label': cycleSelected ? 'Desselecionar todos deste ciclo' : 'Selecionar todos deste ciclo' }), domButton('Agendar ciclo', 'calendar-plus', 'secondary', 'schedule-cycle-cuts', { 'data-cut-ids': cycleIds.join(',') }), domButton('Gerar legendas', 'captions', 'secondary', 'caption-cycle-cuts', { 'data-cut-ids': selectedCycleIds.join(','), 'data-all-cut-ids': cycleIds.join(','), hidden: selectedCycleIds.length < 2 ? 'hidden' : null }), domButton('Substituir palavras', 'replace', 'secondary', 'replace-cycle-metadata', { 'data-job-id': cycleCuts[0]?.job_id || '', 'data-count': cycleIds.length }), domButton('Excluir ciclo', 'trash-2', 'danger', 'delete-cut-cycle', { 'data-video-id': cycleCuts[0]?.video_id || '', 'data-round-name': cycleName })]);
       cycleGroup.append(cycleHeader, cycleActions);
       const list = createElement('div', { className: 'suggestion-list' });
       [...cycleCuts].sort((left, right) => Number(right.score_vaca_roxa || 0) - Number(left.score_vaca_roxa || 0)).forEach((cut, index) => {
@@ -2297,10 +2800,14 @@ function renderLibrary() {
   const list = createElement('div', { className: 'library-video-list' });
   sortedVideos.forEach(video => {
     const related = video.related_video_title ? `Relacionado: ${video.related_video_title}` : 'Nenhum vídeo relacionado definido';
+    const relatedActions = createElement('div', { className: 'library-related-actions' }, [
+      video.tipo === 'short' ? domButton('Definir relacionado', 'link', 'secondary', 'library-related-video', { 'data-short-video-id': video.video_id }) : domText('span', 'library-open-hint', 'Abrir análise'),
+      video.tipo === 'short' && video.related_video_status === 'falhou' && video.related_video_id ? domButton('Tentar relação novamente', 'refresh-cw', 'secondary', 'library-retry-related', { 'data-short-video-id': video.video_id, 'data-related-video-id': video.related_video_id }) : null,
+    ].filter(Boolean));
     const row = createElement('article', { className: 'library-video-row', 'data-action': 'library-video-detail', 'data-video-id': video.video_id }, [
       createVideoThumbnail(video),
       createElement('div', {}, [createElement('strong', { textContent: video.titulo }), createElement('small', { textContent: `${video.status || 'disponível'} · ${related}` })]),
-      video.tipo === 'short' ? domButton('Definir relacionado', 'link', 'secondary', 'library-related-video', { 'data-short-video-id': video.video_id }) : domText('span', 'library-open-hint', 'Abrir análise'),
+      relatedActions,
     ]);
     list.appendChild(row);
   });
@@ -2330,12 +2837,13 @@ function renderLibraryDetail() {
   replaceView(root);
 }
 function isLiveJob(job) {
-  return Boolean(job && ['uploading', 'queued', 'running', 'analyzing', 'rendering'].includes(job.status));
+  return Boolean(job && ['uploading', 'queued', 'pending', 'running', 'processing', 'analyzing', 'rendering', 'publishing', 'scheduling', 'cancelling'].includes(job.status));
 }
 function renderJobProgress(job) {
   const candidatesFound = Number(job.candidatos_gerados ?? job.candidatos);
   const elapsedSeconds = jobElapsedSeconds(job);
   const etaSeconds = jobEtaSeconds(job, elapsedSeconds);
+  const etaLabel = job.kind === 'captions' || job.tipo === 'caption_render' ? 'ETA estimado' : 'ETA';
   const telemetry = [
     Number.isFinite(candidatesFound) ? `Candidatos encontrados: ${candidatesFound}` : '',
     Number.isFinite(Number(job.validos)) ? `Válidos: ${job.validos}` : '',
@@ -2343,13 +2851,13 @@ function renderJobProgress(job) {
     job.device ? `Dispositivo: ${job.device}${job.fallback_reason ? ` (${job.fallback_reason})` : ''}` : '',
     Number.isFinite(elapsedSeconds) ? `Tempo: ${formatElapsedSeconds(elapsedSeconds)}` : '',
     Number.isFinite(Number(job.speed_x)) ? `Velocidade: ${job.speed_x}x` : '',
-    Number.isFinite(etaSeconds) ? `ETA: ${formatElapsedSeconds(etaSeconds)}` : elapsedSeconds !== null ? 'ETA: calculando' : '',
+    Number.isFinite(etaSeconds) ? `${etaLabel}: ${formatElapsedSeconds(etaSeconds)}` : elapsedSeconds !== null ? `${etaLabel}: calculando` : '',
     Number.isFinite(Number(job.processed_audio_seconds)) && Number.isFinite(Number(job.audio_seconds)) ? `Áudio: ${formatElapsedSeconds(job.processed_audio_seconds)} / ${formatElapsedSeconds(job.audio_seconds)}` : '',
     Number.isFinite(Number(job.segments_processed)) ? `Segmentos: ${job.segments_accepted || 0}/${job.segments_processed}` : '',
   ].filter(Boolean).join(' · ');
   const message = job.status === 'queued' && job.message === 'Upload recebido' ? 'Aguardando fila de processamento' : job.message;
   const box = createElement('div', { className: 'progress-box' }, [createElement('div', { className: 'progress-head' }, [domText('span', '', message), domText('strong', '', `${job.progress || 0}%`)]), createElement('div', { className: 'progress-track' }, [createElement('span', { style: `width:${job.progress || 0}%` })]), telemetry ? domText('p', 'progress-telemetry', telemetry) : null]);
-  box.appendChild(createElement('div', { className: 'progress-actions' }, [domButton('Cancelar processo', 'x', 'danger', 'cancel-job')]));
+  if (job.cancelable !== false) box.appendChild(createElement('div', { className: 'progress-actions' }, [domButton('Cancelar processo', 'x', 'danger', 'cancel-job')]));
   return box;
 }
 function renderCuts() {
@@ -2368,15 +2876,17 @@ function renderCuts() {
   intake.append(uploadForm, localPathForm, downloadForm);
   root.appendChild(intake);
   const activeJob = [uploadProgress, cutJob, transcriptionJob].find(isLiveJob);
+  const activeJobTargetsCuts = Array.isArray(activeJob?.cut_ids || activeJob?.cutIds) && (activeJob.cut_ids || activeJob.cutIds).length > 0;
   if (activeJob) root.appendChild(renderJobProgress(activeJob));
   if (cutJob?.status === 'failed') {
+    const publicationFailure = cutJob.kind === 'publish' || cutJob.kind === 'publish-now';
     root.appendChild(createElement('div', { className: 'progress-box task-error' }, [
-      domText('strong', '', 'A geração de cortes falhou'),
-      domText('p', '', cutJob.message || 'Não foi possível gerar os cortes.'),
-      domText('p', '', 'Confira o diagnóstico da curadoria e tente gerar novamente após corrigir a entrada ou a disponibilidade da IA.'),
+      domText('strong', '', publicationFailure ? 'A publicação dos cortes falhou' : 'A geração de cortes falhou'),
+      domText('p', '', cutJob.message || (publicationFailure ? 'Não foi possível confirmar a publicação dos cortes.' : 'Não foi possível gerar os cortes.')),
+      domText('p', '', publicationFailure ? 'A geração dos cortes é separada da publicação. Confira as notificações e o canal antes de tentar novamente; um upload pode ter sido aceito mesmo que o registro local tenha falhado.' : 'Confira o diagnóstico da curadoria e tente gerar novamente após corrigir a entrada ou a disponibilidade da IA.'),
     ]));
   }
-  if (!activeJob) {
+  if (!activeJob || activeJobTargetsCuts) {
   const picker = createElement('section', { className: 'panel cut-source-picker' }, [
     domPanelHeader('1. Escolha o vídeo', 'Escolha o vídeo longo que você quer transformar em cortes curtos.'),
   ]);
@@ -2450,6 +2960,97 @@ function renderCuts() {
     ]),
   ]);
   root.appendChild(durationPanel);
+  const availableCaptionStyles = captionGallery.length ? captionGallery : [
+    { style_id: 'clean', name: 'Clean', style: 'clean', font: 'Arial', size: 54, position: 'bottom', stroke_color: 'black', stroke_size: 3 },
+    { style_id: 'bold', name: 'Bold', style: 'bold', font: 'Arial', size: 60, position: 'bottom', stroke_color: 'black', stroke_size: 4 },
+    { style_id: 'highlight', name: 'Highlight', style: 'highlight', font: 'Arial', size: 56, position: 'bottom', stroke_color: 'black', stroke_size: 3, animation: 'karaoke' },
+  ];
+  const optionalStyle = createElement('select', { 'data-action': 'caption-default', 'data-caption-key': 'style' }, availableCaptionStyles.map(item => createElement('option', { value: item.style_id, selected: captionDefaults.style === item.style_id ? 'true' : null }, captionStyleLabel(item))));
+  const optionalFont = createElement('select', { 'data-action': 'caption-default', 'data-caption-key': 'font' }, captionFonts.map(value => createElement('option', { value, selected: captionDefaults.font === value ? 'true' : null }, value)));
+  const optionalSize = createElement('input', { type: 'range', min: '32', max: '160', step: '1', value: String(captionDefaults.size), 'data-action': 'caption-default', 'data-caption-key': 'size', 'aria-label': 'Tamanho padrão da legenda' });
+  const optionalSizeValue = domText('output', 'caption-size-value', `${captionDefaults.size}px`);
+  const optionalSingleLine = createElement('input', { type: 'checkbox', checked: captionDefaults.singleLine ? 'true' : null, 'data-action': 'caption-default', 'data-caption-key': 'singleLine', 'aria-label': 'Usar uma linha' });
+  const optionalPosition = createElement('select', { 'data-action': 'caption-default', 'data-caption-key': 'position' }, [
+    ['bottom', 'Embaixo'], ['center', 'Centro'], ['top', 'Em cima'],
+  ].map(([value, label]) => createElement('option', { value, selected: captionDefaults.position === value ? 'true' : null }, label)));
+  const optionalStrokeColor = createElement('select', { 'data-action': 'caption-default', 'data-caption-key': 'strokeColor' }, [
+    ['#000000', 'Preto'], ['#FFFFFF', 'Branco'], ['#FF4B5B', 'Coral'],
+  ].map(([value, label]) => createElement('option', { value, selected: captionDefaults.strokeColor === value ? 'true' : null }, label)));
+  const optionalStrokeSize = createElement('select', { 'data-action': 'caption-default', 'data-caption-key': 'strokeSize' }, [0, 1, 2, 3, 4, 6, 8].map(value => createElement('option', { value: String(value), selected: captionDefaults.strokeSize === value ? 'true' : null }, `${value}px`)));
+  const optionalPrimaryColorControl = createCaptionColorControl({ type: 'color', value: captionDefaults.primaryColor, 'data-action': 'caption-default', 'data-caption-key': 'primaryColor' });
+  const optionalHighlightColorControl = createCaptionColorControl({ type: 'color', value: captionDefaults.highlightColor, 'data-action': 'caption-default', 'data-caption-key': 'highlightColor' });
+  const optionalBackgroundColorControl = createCaptionColorControl({ type: 'color', value: captionDefaults.backgroundColor, 'data-action': 'caption-default', 'data-caption-key': 'backgroundColor' });
+  const optionalPrimaryColor = optionalPrimaryColorControl.input;
+  const optionalHighlightColor = optionalHighlightColorControl.input;
+  const optionalBackgroundColor = optionalBackgroundColorControl.input;
+  const optionalBackgroundAlpha = createElement('input', { type: 'range', min: '0', max: '100', step: '5', value: String(captionDefaults.backgroundAlpha), 'data-action': 'caption-default', 'data-caption-key': 'backgroundAlpha' });
+  const optionalPreviewStage = createElement('div', { className: 'caption-preview-stage', role: 'img', 'aria-label': 'Preview da legenda padrão' });
+  const optionalPreviewText = domText('span', 'caption-preview-text', 'A cidade muda quando a gente participa.');
+  optionalPreviewStage.appendChild(optionalPreviewText);
+  const optionalPreviewCut = allReviewCuts().find(cut => cut.caminho_saida || cut.output_path) || null;
+  const applyOptionalPreviewPosition = setupCaptionPreview(optionalPreviewStage, optionalPreviewText, optionalPreviewCut, optionalPosition);
+  const optionalPreviewStyles = {
+    clean: { color: '#ffffff', weight: '400', shadow: '0 2px 3px rgba(0, 0, 0, .95)' },
+    bold: { color: '#ffffff', weight: '800', shadow: '0 3px 0 #101010, 2px 0 0 #101010, -2px 0 0 #101010, 0 -2px 0 #101010' },
+    highlight: { color: '#ffe45c', weight: '800', shadow: '0 3px 0 #101010, 2px 0 0 #101010, -2px 0 0 #101010, 0 -2px 0 #101010' },
+  };
+  const optionalStrokeColors = { black: '#000000', white: '#ffffff', coral: '#ff4b5b' };
+  const updateOptionalPreview = () => {
+    const selected = availableCaptionStyles.find(item => item.style_id === optionalStyle.value);
+    const preset = optionalPreviewStyles[selected?.style || optionalStyle.value] || optionalPreviewStyles.clean;
+    optionalPreviewText.style.fontFamily = `'${optionalFont.value}', sans-serif`;
+    const scale = captionPreviewScale(optionalPreviewStage);
+    optionalPreviewText.style.fontSize = `${Number(optionalSize.value) * scale}px`;
+    fitSingleLineCaption(optionalPreviewStage, optionalPreviewText, Number(optionalSize.value) * scale);
+    optionalSizeValue.textContent = `${optionalSize.value}px`;
+    optionalPreviewText.style.fontWeight = preset.weight;
+    optionalPreviewText.style.whiteSpace = optionalSingleLine.checked ? 'nowrap' : 'normal';
+    optionalPreviewText.style.maxWidth = optionalSingleLine.checked ? 'none' : '88%';
+    optionalPreviewText.style.color = optionalPrimaryColor.value || preset.color;
+    const stroke = Number(optionalStrokeSize.value);
+    const strokeColor = captionColorValue(optionalStrokeColor.value) || optionalStrokeColors.black;
+    const scaledStroke = stroke * scale;
+    const scaledShadow = scaleCaptionShadow(preset.shadow, scale);
+    optionalPreviewText.style.textShadow = stroke ? `0 ${scaledStroke}px 0 ${strokeColor}, ${scaledStroke}px 0 0 ${strokeColor}, -${scaledStroke}px 0 0 ${strokeColor}, 0 -${scaledStroke}px 0 ${strokeColor}, ${scaledShadow}` : scaledShadow;
+    applyOptionalPreviewPosition(optionalPosition.value);
+    optionalPreviewStage.style.justifyContent = 'center';
+    optionalPreviewStage.style.alignItems = 'center';
+  };
+  [optionalStyle, optionalFont, optionalSize, optionalSingleLine, optionalPosition, optionalStrokeColor, optionalStrokeSize, optionalPrimaryColor, optionalHighlightColor, optionalBackgroundColor, optionalBackgroundAlpha].forEach(control => control.addEventListener('change', updateOptionalPreview));
+  optionalSize.addEventListener('input', updateOptionalPreview);
+  optionalPreviewStage.addEventListener('caption-preview-resize', updateOptionalPreview);
+  optionalPosition.addEventListener('change', () => { delete optionalPreviewText.dataset.positionX; delete optionalPreviewText.dataset.positionY; updateOptionalPreview(); });
+  updateOptionalPreview();
+  const captionOptionsContent = createElement('div', { className: 'caption-options-content', hidden: 'hidden' }, [
+    createElement('div', { className: 'caption-option-grid' }, [
+      createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Estilo padrão'), optionalStyle]),
+      createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Fonte padrão'), optionalFont]),
+      createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Tamanho padrão'), optionalSize, optionalSizeValue]),
+      createElement('label', { className: 'cut-metadata-field caption-checkbox-field' }, [optionalSingleLine, domText('span', '', 'Uma linha')]),
+      createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Posição padrão'), optionalPosition]),
+      createElement('div', { className: 'caption-position-actions' }, [domButton('Centralizar legenda', 'crosshair', 'secondary', 'caption-center-preview'), domButton('Centralizar horizontalmente', 'move-horizontal', 'secondary', 'caption-center-horizontal')]),
+      createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Cor do stroke'), optionalStrokeColor]),
+      createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Espessura do stroke'), optionalStrokeSize]),
+      createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Cor base'), optionalPrimaryColorControl.control]),
+      createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Cor destaque'), optionalHighlightColorControl.control]),
+      createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Cor do fundo'), optionalBackgroundColorControl.control]),
+      createElement('label', { className: 'cut-metadata-field' }, [domText('span', '', 'Opacidade do fundo'), optionalBackgroundAlpha]),
+    ]),
+    createElement('div', { className: 'caption-preview-block' }, [domText('strong', '', 'Preview'), optionalPreviewStage]),
+    createElement('div', { className: 'caption-gallery-import' }, [
+      createElement('label', { className: 'caption-file-label' }, [domText('span', '', 'Galeria de estilos'), createElement('input', { id: 'caption-style-file', type: 'file', accept: '.json,application/json' })]),
+      domButton('Importar estilo JSON', 'upload', 'secondary', 'import-caption-style'),
+      createElement('label', { className: 'caption-file-label' }, [domText('span', '', 'Fonte externa'), createElement('input', { id: 'caption-font-file', type: 'file', accept: '.ttf,.otf,.ttc,font/ttf,font/otf' })]),
+      domButton('Instalar fonte', 'type', 'secondary', 'import-caption-font'),
+    ]),
+  ]);
+  const optionalPanel = createElement('section', { className: 'panel cut-optionals' }, [
+    domPanelHeader('3. Opcionais', 'Escolha recursos adicionais para aplicar depois à produção dos cortes.'),
+    domButton('Legendas automáticas', 'captions', 'secondary', 'toggle-caption-options', { 'aria-expanded': 'false', 'aria-controls': 'caption-options-content' }),
+    captionOptionsContent,
+  ]);
+  captionOptionsContent.id = 'caption-options-content';
+  root.appendChild(optionalPanel);
   }
   const candidateToggleAction = 'candidate-toggle';
   const candidateTitle = cutSuggestions.find(cut => cut.titulo)?.titulo || '';
@@ -2626,7 +3227,7 @@ function renderAdmin() {
   const root = createElement('div', { className: 'view-card active' });
   root.appendChild(createElement('div', { className: 'page-header' }, [createElement('div', {}, [domText('span', 'eyebrow', 'Sistema / manutenção'), domText('h1', '', 'Painel Admin'), domText('p', '', 'Operações de manutenção do banco, da fila e dos artefatos temporários.')])]));
   const actions = createElement('div', { className: 'admin-actions panel' });
-  [['clear-cache', 'Limpar cache', 'trash-2', 'Remove temporários e caches de transcrição órfãos.'], ['reset-jobs', 'Resetar fila', 'rotate-ccw', 'Cancela jobs presos e libera estados pendentes.'], ['vacuum-db', 'Otimizar banco', 'database', 'Executa VACUUM no SQLite.'], ['restart-server', 'Reiniciar servidor', 'refresh-cw', 'Reinicia o processo web e recupera estados antigos como interrompidos.']].forEach(([action, label, iconName, description]) => {
+  [['clear-cache', 'Limpar cache', 'trash-2', 'Remove temporários e caches de transcrição órfãos.'], ['reset-jobs', 'Resetar fila', 'rotate-ccw', 'Cancela jobs presos e libera estados pendentes.'], ['clear-finished-jobs', 'Limpar jobs finalizados', 'broom', 'Remove jobs concluídos, falhos ou cancelados; jobs ativos são preservados.'], ['vacuum-db', 'Otimizar banco', 'database', 'Executa VACUUM no SQLite.'], ['restart-server', 'Reiniciar servidor', 'refresh-cw', 'Reinicia o processo web e recupera estados antigos como interrompidos.']].forEach(([action, label, iconName, description]) => {
     actions.appendChild(createElement('article', { className: 'admin-action' }, [domButton(label, iconName, 'lime', `admin-${action}`), domText('p', '', description)]));
   });
   root.appendChild(actions);
@@ -2638,7 +3239,7 @@ async function runAdminAction(action, message) {
     const response = await fetch(`/api/admin/${action}`, { method: 'POST' });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || 'Operação não autorizada.');
-    const detail = action === 'clear-cache' ? `${payload.removidos || 0} arquivo(s) removido(s).` : action === 'reset-jobs' ? `${payload.cancelados || 0} job(s) cancelado(s).` : action === 'restart-server' ? 'A página será recarregada quando o servidor voltar.' : 'Banco otimizado com sucesso.';
+    const detail = action === 'clear-cache' ? `${payload.removidos || 0} arquivo(s) removido(s).` : action === 'reset-jobs' ? `${payload.cancelados || 0} job(s) cancelado(s).` : action === 'clear-finished-jobs' ? `${payload.removidos || 0} job(s) removido(s).` : action === 'restart-server' ? 'A página será recarregada quando o servidor voltar.' : 'Banco otimizado com sucesso.';
     showToast(`${message} concluído. ${detail}`);
     if (action === 'restart-server') window.setTimeout(() => window.location.reload(), 1800);
   } catch (error) {
@@ -2655,6 +3256,40 @@ function renderSimple(title, eyebrow, text) {
 function render(view = state.view) { state.view = view; breadcrumb.textContent = labels[view] || view; ({ overview: renderOverview, ranking: renderRanking, autopsy: renderAutopsy, suggestions: renderSuggestions, radar: renderRadar, opportunities: renderOpportunities, cuts: renderCuts, library: renderLibrary, publishing: renderPublishing, settings: renderSettings, admin: renderAdmin }[view] || renderOverview)(); refreshIcons(); if (view === 'autopsy') { loadAutopsy(); loadOpportunityTask(); fetch('/api/content-analysis/status').then(response => response.json()).then(payload => { contentAnalysisStatus = payload; renderAutopsy(); refreshIcons(); if (payload.status === 'running') pollContentAnalysis(); }); } }
 
 document.addEventListener('change', (event) => { const duration = event.target.closest('[data-action="cut-duration"]'); if (duration) { const minimum = Number(document.querySelector('#cut-duration-min')?.value || cutDurationRange.min); const maximum = Number(document.querySelector('#cut-duration-max')?.value || cutDurationRange.max); if (minimum > maximum) { showToast('A duração mínima não pode ser maior que a máxima.'); renderCuts(); return; } cutDurationRange = { min: minimum, max: maximum }; renderCuts(); } const select = event.target.closest('[data-action="cut-source"]'); if (select) selectCutSource(select.value); const librarySelect = event.target.closest('[data-action="library-sort"]'); if (librarySelect) { librarySort = librarySelect.value; renderLibrary(); return; } const candidate = event.target.closest('[data-action="candidate-toggle"]'); if (candidate) { const cutId = Number(candidate.dataset.cutId); if (candidate.checked) selectedCandidateIds.add(cutId); else selectedCandidateIds.delete(cutId); renderCuts(); } });
+document.addEventListener('change', (event) => { const captionDefault = event.target.closest('[data-action="caption-default"]'); if (!captionDefault) return; const key = captionDefault.dataset.captionKey; captionDefaults[key] = ['size', 'strokeSize', 'backgroundAlpha'].includes(key) ? Number(captionDefault.value) : key === 'singleLine' ? captionDefault.checked : captionDefault.value; });
+document.addEventListener('input', (event) => { const captionDefault = event.target.closest('[data-action="caption-default"]'); if (!captionDefault) return; if (captionDefault.dataset.captionKey === 'size') captionDefaults.size = Number(captionDefault.value); });
+document.addEventListener('click', (event) => {
+  const swatch = event.target.closest('[data-caption-color]');
+  if (!swatch) return;
+  const input = swatch.closest('.caption-color-control')?.querySelector('input[type="color"]');
+  if (!input) return;
+  input.value = swatch.dataset.captionColor;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+});
+document.addEventListener('click', (event) => {
+  const centerCaption = event.target.closest('[data-action="caption-center-preview"]');
+  if (!centerCaption) return;
+  const scope = centerCaption.closest('.caption-modal-backdrop, .caption-options-content, .view-card') || document;
+  const previewText = scope.querySelector('.caption-preview-text');
+  const position = scope.querySelector('#caption-position-select, [data-caption-key="position"]');
+  if (previewText && position) {
+    previewText.dataset.positionX = '50';
+    previewText.dataset.positionY = '50';
+    position.value = 'center';
+    position.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+});
+document.addEventListener('click', (event) => {
+  const centerCaptionHorizontal = event.target.closest('[data-action="caption-center-horizontal"]');
+  if (!centerCaptionHorizontal) return;
+  const scope = centerCaptionHorizontal.closest('.caption-modal-backdrop, .caption-options-content, .view-card') || document;
+  const previewText = scope.querySelector('.caption-preview-text');
+  if (previewText) {
+    previewText.dataset.positionX = '50';
+    previewText.style.left = '50%';
+  }
+});
 document.addEventListener('change', (event) => { const filter = event.target.closest('[data-action="autopsy-filter"]'); if (!filter) return; autopsyFilters[filter.dataset.autopsySide] = filter.value; renderAutopsy(); refreshIcons(); });
 document.addEventListener('click', (event) => { const nav = event.target.closest('[data-view]'); if (nav) { document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item === nav)); render(nav.dataset.view); renderDynamicInsights(); if (nav.dataset.view === 'ranking') loadRanking(); if (nav.dataset.view === 'radar') loadRadar(); if (nav.dataset.view === 'opportunities') loadOpportunities(); if (nav.dataset.view === 'cuts') loadCutSources(); if (nav.dataset.view === 'publishing') loadScheduled(); if (nav.dataset.view === 'settings') loadProfiles(); return; } const actionElement = event.target.closest('[data-action]'); const action = actionElement?.dataset.action; if (!action) return; if (action === 'toggle-theme') { const nextTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = nextTheme; localStorage.setItem('growth-engine-theme', nextTheme); clearElement(actionElement); actionElement.appendChild(domIcon(nextTheme === 'dark' ? 'sun' : 'moon')); refreshIcons(); } else if (action === 'save-location') saveLocationSettings(); else if (action === 'settings') { render('settings'); loadProfiles(); } else if (action === 'opportunities') loadOpportunities(); else if (action === 'profile-rebuild') startProfileRebuild(); else if (action === 'briefing') { fetch(`/api/opportunities/${actionElement.dataset.opportunityId}/briefing`).then(response => response.json()).then(briefing => showToast(`Briefing: ${briefing.titulo_provisorio || 'carregado'}`)); } else if (action === 'cuts') { render('cuts'); loadCutSources(); } else if (action === 'ranking') { render('ranking'); loadRanking(); } else if (action === 'ranking-filter') loadRanking(actionElement.dataset.rankingType); else if (action === 'scheduled') loadScheduled(); else if (action === 'connect-google') window.location.href = '/oauth/google/start'; else if (action === 'sync') startSync(); else if (action === 'preview') generateCutPreview(); else if (action === 'transcribe') runTranscription(); else if (action === 'approve') showToast('Corte aprovado e enviado para a fila de renderização.'); else if (action === 'reject') showToast('Corte rejeitado. A decisão será registrada.'); else if (action === 'autopsy') startContentAnalysis(); else if (action === 'suggest') showToast('Geração de sugestões enfileirada.'); });
 
@@ -2693,7 +3328,7 @@ document.addEventListener('click', (event) => {
     return;
   }
   const detail = event.target.closest('[data-action="library-video-detail"]');
-  if (detail && !event.target.closest('[data-action="library-related-video"]')) {
+  if (detail && !event.target.closest('[data-action="library-related-video"]') && !event.target.closest('[data-action="library-retry-related"]')) {
     loadLibraryDetail(detail.dataset.videoId);
     return;
   }
@@ -2704,11 +3339,25 @@ document.addEventListener('click', (event) => {
   }
   const libraryNav = event.target.closest('[data-view="library"]');
   if (libraryNav) loadLibrary();
+  const retryRelated = event.target.closest('[data-action="library-retry-related"]');
+  if (retryRelated) {
+    fetch('/api/library/related-video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ short_video_id: retryRelated.dataset.shortVideoId, related_video_id: retryRelated.dataset.relatedVideoId }),
+    }).then(response => response.json().then(payload => ({ response, payload }))).then(({ response, payload }) => {
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível reenviar a relação.');
+      showToast('Retry do vídeo relacionado enviado ao YouTube Studio.');
+      loadNotifications();
+      loadLibrary();
+    }).catch(error => showToast(error.message));
+    return;
+  }
   const relatedAction = event.target.closest('[data-action="library-related-video"]');
   if (!relatedAction) return;
   openRelatedVideoPicker().then(video => {
     if (!video) return null;
-    return fetch('/api/library/related-video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ short_video_id: relatedAction.dataset.shortVideoId, related_video_id: video.video_id }) });
+    return fetch('/api/library/related-video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ short_video_id: relatedAction.dataset.shortVideoId, ...(video.no_related_video ? { no_related_video: true } : { related_video_id: video.video_id }) }) });
   }).then(response => {
     if (response && !response.ok) throw new Error('Não foi possível salvar a relação.');
     if (response) {
@@ -2728,6 +3377,11 @@ document.addEventListener('click', (event) => {
   if (selectCycle) toggleCycleCuts(selectCycle.dataset.cutIds.split(',').map(Number).map(id => allReviewCuts().find(cut => Number(cut.cut_id || cut.id) === id)).filter(Boolean));
   const scheduleCycle = event.target.closest('[data-action="schedule-cycle-cuts"]');
   if (scheduleCycle) scheduleCuts(scheduleCycle.dataset.cutIds.split(',').map(Number), 'cortes do ciclo');
+  const captionCycle = event.target.closest('[data-action="caption-cycle-cuts"]');
+  if (captionCycle) {
+    const cuts = captionCycle.dataset.cutIds.split(',').map(Number).map(id => allReviewCuts().find(cut => Number(cut.cut_id || cut.id) === id)).filter(Boolean);
+    if (cuts.length >= 2) openCaptionDialog(cuts[0], cuts);
+  }
 });
 document.addEventListener('click', (event) => {
   const selectionButton = event.target.closest('[data-action="candidate-toggle-button"]');
@@ -2742,9 +3396,9 @@ document.addEventListener('click', (event) => {
     selectionButton.setAttribute('aria-label', selected ? 'Remover da seleção para postagem' : 'Selecionar para postagem');
     selectionButton.title = selected ? 'Remover da seleção para postagem' : 'Selecionar para postagem';
     clearElement(selectionButton);
-    selectionButton.append(domIcon(selected ? 'circle-check' : 'circle'), selected ? 'Selecionado' : 'Postar');
+    selectionButton.append(domIcon(selected ? 'circle-check' : 'circle'), selected ? 'Selecionado' : 'Selecionar');
     refreshIcons();
-    updateSelectedCutsToolbar();
+    syncSelectionButtons();
     return;
   }
   const editButton = event.target.closest('[data-action="edit-cut"]');
@@ -2756,8 +3410,62 @@ document.addEventListener('click', (event) => {
   if (event.target.closest('[data-action="close-cut-editor"]')) { closeCutEditor(); return; }
   const cycleButton = event.target.closest('[data-action="delete-cut-cycle"]');
   if (cycleButton) { deleteCutCycle(cycleButton.dataset.videoId, cycleButton.dataset.roundName); return; }
+  const replaceCycleButton = event.target.closest('[data-action="replace-cycle-metadata"]');
+  if (replaceCycleButton) { replaceCycleMetadata(replaceCycleButton.dataset.jobId, Number(replaceCycleButton.dataset.count || 0)); return; }
   const renderButton = event.target.closest('[data-action="render-cut"]');
   if (renderButton) { renderSingleCut(Number(renderButton.dataset.cutId)); return; }
+  const captionButton = event.target.closest('[data-action="caption-cut"]');
+  if (captionButton) { const cut = allReviewCuts().find(item => Number(item.cut_id || item.id) === Number(captionButton.dataset.cutId)); if (cut) openCaptionDialog(cut); return; }
+  const transcriptButton = event.target.closest('[data-action="read-cut-transcript"]');
+  if (transcriptButton) { const cut = allReviewCuts().find(item => Number(item.cut_id || item.id) === Number(transcriptButton.dataset.cutId)); if (cut) openCutTranscriptReader(cut); return; }
+  const previewButton = event.target.closest('[data-action="open-cut-preview"]');
+  if (previewButton) { const cut = allReviewCuts().find(item => Number(item.cut_id || item.id) === Number(previewButton.dataset.cutId)); if (cut) openCutPreview(cut); return; }
+  const fullscreenButton = event.target.closest('[data-action="fullscreen-cut-preview"]');
+  if (fullscreenButton) {
+    const preview = fullscreenButton.closest('.cut-preview');
+    const cut = allReviewCuts().find(item => Number(item.cut_id || item.id) === Number(fullscreenButton.dataset.cutId));
+    if (preview?.requestFullscreen) preview.requestFullscreen().catch(() => {
+      if (cut) openCutPreview(cut);
+    });
+    else if (cut) openCutPreview(cut);
+    return;
+  }
+  const generateCaptionsButton = event.target.closest('[data-action="generate-captions"]');
+  if (generateCaptionsButton) {
+    const options = {
+      style_id: document.querySelector('#caption-style-select')?.value || 'clean',
+      style: (captionGallery.find(item => item.style_id === (document.querySelector('#caption-style-select')?.value || 'clean')) || {}).style || document.querySelector('#caption-style-select')?.value || 'clean',
+      font: document.querySelector('#caption-font-select')?.value || 'Arial',
+      size: Number(document.querySelector('#caption-size-select')?.value || 54),
+      position: document.querySelector('#caption-position-select')?.value || 'bottom',
+      stroke_color: document.querySelector('#caption-stroke-color-select')?.value || 'black',
+      stroke_size: Number(document.querySelector('#caption-stroke-size-select')?.value || 3),
+      primary_color: document.querySelector('#caption-primary-color-select')?.value || '#FFFFFF',
+      highlight_color: document.querySelector('#caption-highlight-color-select')?.value || '#FFE45C',
+      background_color: document.querySelector('#caption-background-color-select')?.value || '#000000',
+      background_alpha: Number(document.querySelector('#caption-background-alpha-select')?.value || 50),
+      uma_linha: Boolean(document.querySelector('#caption-single-line-select')?.checked),
+      position_y: Number(document.querySelector('#caption-position-select')?.closest('.caption-modal-backdrop')?.querySelector('.caption-preview-text')?.dataset.positionY || NaN),
+      position_x: Number(document.querySelector('#caption-position-select')?.closest('.caption-modal-backdrop')?.querySelector('.caption-preview-text')?.dataset.positionX || NaN),
+    };
+    const cutIds = generateCaptionsButton.dataset.cutIds.split(',').map(Number).filter(Boolean);
+    generateCaptionsForCuts(cutIds, options, generateCaptionsButton.closest('.caption-modal-backdrop'));
+    return;
+  }
+  const captionOptionalToggle = event.target.closest('[data-action="caption-optional-toggle"]');
+  if (captionOptionalToggle) { cutOptionalSettings.captions = captionOptionalToggle.checked; return; }
+  const captionOptionsToggle = event.target.closest('[data-action="toggle-caption-options"]');
+  if (captionOptionsToggle) {
+    const content = document.getElementById(captionOptionsToggle.getAttribute('aria-controls'));
+    const expanded = captionOptionsToggle.getAttribute('aria-expanded') === 'true';
+    captionOptionsToggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+    if (content) content.hidden = expanded;
+    return;
+  }
+  if (event.target.closest('[data-action="import-caption-style"]')) { importCaptionStyle(); return; }
+  if (event.target.closest('[data-action="import-caption-font"]')) { importCaptionFont(); return; }
+  if (event.target.closest('[data-action="close-caption-dialog"]')) { document.querySelector('.caption-modal-backdrop')?.remove(); return; }
+  if (event.target.closest('[data-action="close-cut-preview"]')) { document.querySelector('.cut-preview-backdrop')?.remove(); return; }
   const deleteButton = event.target.closest('[data-action="delete-cut"]');
   if (deleteButton) { deleteCut(Number(deleteButton.dataset.cutId)); return; }
   const scheduleButton = event.target.closest('[data-action="schedule-cut"]');
@@ -2801,7 +3509,7 @@ document.addEventListener('click', (event) => {
 document.addEventListener('click', (event) => {
   const action = event.target.closest('[data-action^="admin-"]')?.dataset.action;
   if (!action) return;
-  const actions = { 'admin-clear-cache': ['clear-cache', 'Limpar cache'], 'admin-reset-jobs': ['reset-jobs', 'Resetar fila'], 'admin-vacuum-db': ['vacuum-db', 'Otimizar banco'], 'admin-restart-server': ['restart-server', 'Reiniciar servidor'] };
+  const actions = { 'admin-clear-cache': ['clear-cache', 'Limpar cache'], 'admin-reset-jobs': ['reset-jobs', 'Resetar fila'], 'admin-clear-finished-jobs': ['clear-finished-jobs', 'Limpar jobs finalizados'], 'admin-vacuum-db': ['vacuum-db', 'Otimizar banco'], 'admin-restart-server': ['restart-server', 'Reiniciar servidor'] };
   if (actions[action]) runAdminAction(...actions[action]);
 });
 render();

@@ -72,7 +72,7 @@ def list_active_jobs(perfil_id=1):
     conn = get_connection()
     try:
         rows = conn.execute(
-            "SELECT job_id, perfil_id, tipo, video_id, status, progresso, mensagem, erro, resultado_json, atualizado_em FROM tarefas_jobs WHERE perfil_id=? AND status IN ('queued', 'running') ORDER BY criado_em",
+            "SELECT job_id, perfil_id, tipo, video_id, status, progresso, mensagem, erro, resultado_json, etapa, item_atual, total_itens, checkpoint_json, criado_em, iniciado_em, atualizado_em FROM tarefas_jobs WHERE perfil_id=? AND status IN ('queued', 'running') ORDER BY criado_em",
             (perfil_id,),
         ).fetchall()
         return [dict(row) for row in rows]

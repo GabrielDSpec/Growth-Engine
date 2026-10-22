@@ -18,7 +18,7 @@ from core.media_tools import localizar_ferramentas, obter_duracao
 _MODEL_WHISPER = None
 _WHISPER_RUNTIME = threading.local()
 _TRANSCRIPTION_CACHE_VERSION = 3
-_TRANSCRIPTION_CHUNK_CACHE_VERSION = 1
+_TRANSCRIPTION_CHUNK_CACHE_VERSION = 2
 _AUDIO_MARKER_PATTERN = re.compile(r"^\s*\[[^\]]+\]\s*$")
 
 
@@ -181,6 +181,18 @@ def _deduplicate_transcription_segments(segments):
     return result
 
 
+def _extrair_palavras(segment):
+    resultado = []
+    for palavra in getattr(segment, "words", None) or []:
+        texto = str(getattr(palavra, "word", "") or "").strip()
+        inicio = getattr(palavra, "start", None)
+        fim = getattr(palavra, "end", None)
+        if not texto or inicio is None or fim is None or float(fim) <= float(inicio):
+            continue
+        resultado.append({"inicio": round(float(inicio), 3), "fim": round(float(fim), 3), "texto": texto})
+    return resultado
+
+
 def _transcricao_dominada_por_marcadores_audio(segments):
     """Detecta quando a saída descreve o áudio ambiente, mas perdeu a fala."""
     if not segments:
@@ -221,6 +233,7 @@ def _transcrever_faster_whisper_em_chunks(
                 caminho_audio,
                 language="pt",
                 beam_size=5,
+                word_timestamps=True,
                 vad_filter=vad_filter,
                 condition_on_previous_text=False,
                 clip_timestamps=[start, end],
@@ -232,10 +245,19 @@ def _transcrever_faster_whisper_em_chunks(
                     continue
                 inicio = float(segment.start)
                 fim = float(segment.end)
-                if start > 0 and fim <= start + 0.001:
+                deslocar = start > 0 and fim <= start + 0.001
+                if deslocar:
                     inicio += start
                     fim += start
-                segments.append({"inicio": round(inicio, 3), "fim": round(fim, 3), "texto": texto})
+                palavras = _extrair_palavras(segment)
+                if deslocar and palavras:
+                    for palavra in palavras:
+                        palavra["inicio"] += start
+                        palavra["fim"] += start
+                item = {"inicio": round(inicio, 3), "fim": round(fim, 3), "texto": texto}
+                if palavras:
+                    item["palavras"] = palavras
+                segments.append(item)
             cached_chunks[chunk_key] = segments
             _save_transcription_chunks_cache(chunk_cache_path, cached_chunks, chunk_seconds, overlap_seconds)
         all_segments.extend(segments)
@@ -260,6 +282,7 @@ def _transcrever_faster_whisper_adaptativo(caminho_audio, model, progress_callba
             caminho_audio,
             language="pt",
             beam_size=5,
+            word_timestamps=True,
             vad_filter=vad_filter,
             condition_on_previous_text=False,
         )
@@ -270,12 +293,16 @@ def _transcrever_faster_whisper_adaptativo(caminho_audio, model, progress_callba
             texto = segment.text.strip()
             if not texto:
                 continue
-            resultado.append({
+            item = {
                 "indice": indice,
                 "inicio": round(float(segment.start), 3),
                 "fim": round(float(segment.end), 3),
                 "texto": texto,
-            })
+            }
+            palavras = _extrair_palavras(segment)
+            if palavras:
+                item["palavras"] = palavras
+            resultado.append(item)
             if info.duration:
                 elapsed_seconds = max(time.monotonic() - started_at, 0.001)
                 processed_audio_seconds = min(float(segment.end), float(info.duration))

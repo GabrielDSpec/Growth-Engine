@@ -128,6 +128,19 @@ def _metadata_for_cut(cut):
     return title, description, tags
 
 
+def arquivo_publicacao_corte(cut):
+    legenda_status = str(cut.get("legenda_status") or "").strip().lower()
+    legenda_caminho = cut.get("legenda_caminho")
+    if legenda_status == "concluido":
+        if not legenda_caminho or not os.path.isfile(legenda_caminho):
+            raise RuntimeError("A legenda do corte foi concluída, mas o MP4 legendado não foi encontrado.")
+        return legenda_caminho
+    caminho = cut.get("caminho_saida")
+    if not caminho or not os.path.isfile(caminho):
+        raise RuntimeError("O MP4 renderizado não foi encontrado.")
+    return caminho
+
+
 def _truncate_youtube_title(title, limit=YOUTUBE_TITLE_LIMIT):
     title = re.sub(r"\s+", " ", str(title or "")).strip()
     if len(title) <= limit:
@@ -276,9 +289,15 @@ def _behavioral_period(cut):
     return "noite"
 
 
-def planejar_melhores_slots(quantidade, perfil_id=1, cuts=None):
+def planejar_melhores_slots(quantidade, perfil_id=1, cuts=None, start_at=None):
     scores = _historical_hour_scores(perfil_id)
-    agora = datetime.now().replace(second=0, microsecond=0)
+    if start_at:
+        try:
+            agora = datetime.fromisoformat(str(start_at).replace("Z", "+00:00")).replace(tzinfo=None, second=0, microsecond=0)
+        except ValueError as error:
+            raise ValueError("A data e hora inicial do agendamento são inválidas.") from error
+    else:
+        agora = datetime.now().replace(second=0, microsecond=0)
     cuts = (cuts or [{}] * quantidade)[:quantidade]
     candidatos = []
     for dia_offset in range(0, 15):
@@ -319,9 +338,7 @@ def planejar_melhores_slots(quantidade, perfil_id=1, cuts=None):
 
 
 def publicar_e_agendar_corte(cut, data_publicacao, hora_publicacao, perfil_id=1):
-    caminho = cut.get("caminho_saida")
-    if not caminho or not os.path.isfile(caminho):
-        raise RuntimeError("O MP4 renderizado não foi encontrado.")
+    caminho = arquivo_publicacao_corte(cut)
     titulo, descricao, tags = _metadata_for_cut(cut)
     if not descricao:
         raise RuntimeError("Resumo editorial não disponível; o Short não pode ser publicado.")
@@ -340,9 +357,7 @@ def publicar_e_agendar_corte(cut, data_publicacao, hora_publicacao, perfil_id=1)
 
 
 def publicar_corte_imediato(cut, perfil_id=1):
-    caminho = cut.get("caminho_saida")
-    if not caminho or not os.path.isfile(caminho):
-        raise RuntimeError("O MP4 renderizado não foi encontrado.")
+    caminho = arquivo_publicacao_corte(cut)
     titulo, descricao, tags = _metadata_for_cut(cut)
     if not descricao:
         raise RuntimeError("Resumo editorial não disponível; o Short não pode ser publicado.")

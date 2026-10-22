@@ -68,6 +68,33 @@ class FrontendXssContractsTests(unittest.TestCase):
         self.assertIn("/api/youtube/related-videos?initial=", picker)
         self.assertIn("X-Profile-Id", picker)
         self.assertIn("activeProfileId", picker)
+        self.assertIn("Nenhum vídeo relacionado", picker)
+        self.assertIn("no_related_video", picker)
+
+    def test_related_video_picker_supports_scheduled_videos(self):
+        source = (Path(__file__).parents[1] / "core" / "web_server.py").read_text(encoding="utf-8")
+        self.assertIn("status IN ('publicado', 'publicado_externo', 'programado', 'agendado')", source)
+
+    def test_caption_preview_exposes_horizontal_centering(self):
+        self.assertGreaterEqual(SOURCE.count("Centralizar horizontalmente"), 2)
+        self.assertIn("caption-center-horizontal", SOURCE)
+        self.assertIn("previewText.dataset.positionX = '50'", SOURCE)
+
+    def test_caption_adjustment_can_read_cut_transcription_safely(self):
+        self.assertIn("Ler transcrição do corte", SOURCE)
+        reader_start = SOURCE.index("async function openCutTranscriptReader")
+        reader = SOURCE[reader_start:SOURCE.index("async function generateCutCaptions", reader_start)]
+        self.assertIn("/api/transcription?video_id=", reader)
+        self.assertIn("segment.texto", reader)
+        self.assertNotIn("innerHTML", reader)
+        self.assertIn("/api/cuts/caption-transcript", reader)
+        self.assertIn("Salvar e voltar ao ajuste", SOURCE)
+        self.assertIn("background: var(--panel)", (Path(__file__).parents[1] / "frontend" / "styles.css").read_text(encoding="utf-8"))
+
+    def test_cycle_metadata_replacement_is_scoped_to_job(self):
+        self.assertIn("replace-cycle-metadata", SOURCE)
+        self.assertIn("/api/cuts/replace-cycle-metadata", SOURCE)
+        self.assertIn("data-job-id", SOURCE)
 
     def test_profile_menu_can_reauthorize_youtube(self):
         self.assertIn("profile-reauthorize", SOURCE)

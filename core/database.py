@@ -193,6 +193,33 @@ def init_db():
         )
         """)
         cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cortes_transcricao_editada (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            perfil_id INTEGER NOT NULL DEFAULT 1 REFERENCES perfis(id),
+            cut_id INTEGER NOT NULL REFERENCES cortes_gerados(id) ON DELETE CASCADE,
+            segmento_indice INTEGER NOT NULL,
+            inicio REAL NOT NULL,
+            fim REAL NOT NULL,
+            texto TEXT NOT NULL DEFAULT '',
+            atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (perfil_id, cut_id, segmento_indice)
+        )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cortes_transcricao_editada_cut ON cortes_transcricao_editada (perfil_id, cut_id)")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS caption_styles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            perfil_id INTEGER NOT NULL DEFAULT 1 REFERENCES perfis(id),
+            style_id TEXT NOT NULL,
+            nome TEXT NOT NULL,
+            config_json TEXT NOT NULL,
+            protegido INTEGER NOT NULL DEFAULT 0,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (perfil_id, style_id)
+        )
+        """)
+        cursor.execute("""
         CREATE TABLE IF NOT EXISTS perfis_conteudo (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             resumo TEXT NOT NULL DEFAULT '',
@@ -251,7 +278,7 @@ def init_db():
             SET duracao_segundos=ROUND((julianday(concluido_em) - julianday(COALESCE(iniciado_em, criado_em))) * 86400, 3)
             WHERE duracao_segundos IS NULL AND concluido_em IS NOT NULL
         """)
-        for coluna, tipo in (("video_titulo", "TEXT"), ("descricao_publicacao", "TEXT NOT NULL DEFAULT ''"), ("nome_rodada", "TEXT"), ("numero_rodada", "INTEGER"), ("selecionado", "INTEGER NOT NULL DEFAULT 0"), ("motivo_rejeicao", "TEXT"), ("montagem_json", "TEXT NOT NULL DEFAULT ''"), ("horario_recomendado_json", "TEXT NOT NULL DEFAULT '{}'")):
+        for coluna, tipo in (("video_titulo", "TEXT"), ("descricao_publicacao", "TEXT NOT NULL DEFAULT ''"), ("nome_rodada", "TEXT"), ("numero_rodada", "INTEGER"), ("selecionado", "INTEGER NOT NULL DEFAULT 0"), ("motivo_rejeicao", "TEXT"), ("montagem_json", "TEXT NOT NULL DEFAULT ''"), ("horario_recomendado_json", "TEXT NOT NULL DEFAULT '{}'"), ("legenda_style_id", "TEXT"), ("legenda_config_json", "TEXT"), ("legenda_estilo", "TEXT"), ("legenda_fonte", "TEXT"), ("legenda_tamanho", "INTEGER"), ("legenda_posicao", "TEXT"), ("legenda_stroke_cor", "TEXT"), ("legenda_stroke_tamanho", "INTEGER"), ("legenda_caminho", "TEXT"), ("legenda_status", "TEXT NOT NULL DEFAULT 'none'"), ("legenda_erro", "TEXT")):
             try:
                 cursor.execute(f"ALTER TABLE cortes_gerados ADD COLUMN {coluna} {tipo}")
             except sqlite3.OperationalError:
@@ -272,7 +299,7 @@ def init_db():
                 pass
         cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_perfis_google_account_email ON perfis_google (google_account_email) WHERE google_account_email IS NOT NULL AND google_account_email <> ''")
         cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_perfis_google_account_id ON perfis_google (google_account_id) WHERE google_account_id IS NOT NULL AND google_account_id <> ''")
-        for tabela in ("videos_historico", "oportunidades_conteudo", "cortes_gerados", "analises_conteudo", "tarefas_processamento", "tarefas_jobs", "perfis_conteudo", "classificacoes_conteudo", "falhas_classificacao_conteudo", "preferencias_usuario", "notificacoes", "perfis_google"):
+        for tabela in ("videos_historico", "oportunidades_conteudo", "cortes_gerados", "caption_styles", "analises_conteudo", "tarefas_processamento", "tarefas_jobs", "perfis_conteudo", "classificacoes_conteudo", "falhas_classificacao_conteudo", "preferencias_usuario", "notificacoes", "perfis_google"):
             try:
                 cursor.execute(f"ALTER TABLE {tabela} ADD COLUMN perfil_id INTEGER NOT NULL DEFAULT 1 REFERENCES perfis(id)")
             except sqlite3.OperationalError:

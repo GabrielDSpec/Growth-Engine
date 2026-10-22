@@ -10,18 +10,46 @@ from core.cutter import _montar_prompt, _titulo_editorial_local, _titulo_generic
 from core.profiles import validar_url_canal
 from core.radar_sources import _rss_source_urls
 from core.task_runner import TaskRunner
-from core.publisher import _dedupe_repeated_text, _metadata_for_cut, _normalize_hashtags, _original_video_url, _restore_entities, _truncate_youtube_title, planejar_melhores_slots
-from core.web_server import _clear_transcription_cache, _fallback_editorial_description, _save_publication_description, _update_runtime_job, _validar_ids_video_relacionado
+from core.publisher import _dedupe_repeated_text, _metadata_for_cut, _normalize_hashtags, _original_video_url, _restore_entities, _truncate_youtube_title, arquivo_publicacao_corte, planejar_melhores_slots
+from core.web_server import _admin_clear_finished_jobs, _clear_transcription_cache, _fallback_editorial_description, _save_publication_description, _update_runtime_job, _validar_ids_video_relacionado
 from core.notification_repository import select_notifications
 from core.content_analysis_repository import select_analysis_status
 from core.content_profile_repository import select_profile_videos
 from core.opportunities_repository import insert_opportunity, select_opportunities, select_top15_analyzed_videos
 from core.opportunities import _validar_sugestoes, listar_oportunidades, gerar_briefing
 from core.job_repository import create_job, recover_running_jobs, select_job, update_job
-from core.cuts_repository import create_cut, list_cuts, update_cut
+from core.cuts_repository import create_cut, list_cut_caption_transcript, list_cuts, replace_cut_cycle_metadata, save_cut_caption_transcript, update_cut
 
 
 class CoreContractsTests(unittest.TestCase):
+    @patch("core.web_server.get_connection")
+    def test_admin_clear_finished_jobs_preserves_active_jobs(self, connection_factory):
+        connection = connection_factory.return_value
+        connection.execute.return_value.rowcount = 3
+        self.assertEqual(_admin_clear_finished_jobs(915361), {"removidos": 3})
+        query, params = connection.execute.call_args.args
+        self.assertIn("DELETE FROM tarefas_jobs", query)
+        self.assertIn("completed", params)
+        connection.commit.assert_called_once()
+
+    @patch("core.web_server._youtube_client")
+    @patch("core.web_server.get_connection")
+    @patch("core.web_server.arquivo_publicacao_corte", return_value="captioned.mp4")
+    def test_published_short_idempotency_uses_captioned_path(self, _publication_path, connection_factory, youtube_client):
+        connection = connection_factory.return_value
+        connection.execute.return_value.fetchall.return_value = [{"video_id": "captioned-id", "status": "publicado_externo", "titulo": "Título", "descricao": "Descrição", "arquivo_origem": "captioned.mp4"}]
+        youtube_client.return_value.videos.return_value.list.return_value.execute.return_value = {"items": [{"id": "captioned-id"}]}
+        from core.web_server import _published_short_for_cut
+
+        self.assertEqual(_published_short_for_cut({"caminho_saida": "original.mp4", "legenda_status": "concluido"}, 915361)["video_id"], "captioned-id")
+        self.assertIn("captioned.mp4", connection.execute.call_args.args[1])
+
+    def test_captioned_cut_publication_uses_caption_file(self):
+        with patch("core.publisher.os.path.isfile", side_effect=lambda path: path in {"original.mp4", "captioned.mp4"}):
+            self.assertEqual(arquivo_publicacao_corte({"caminho_saida": "original.mp4", "legenda_status": "concluido", "legenda_caminho": "captioned.mp4"}), "captioned.mp4")
+            with self.assertRaisesRegex(RuntimeError, "MP4 legendado"):
+                arquivo_publicacao_corte({"caminho_saida": "original.mp4", "legenda_status": "concluido", "legenda_caminho": "missing.mp4"})
+
     def test_clear_transcription_cache_preserves_video_and_cuts(self):
         class Result:
             def fetchone(self):
@@ -165,6 +193,13 @@ class CoreContractsTests(unittest.TestCase):
         expected_today = min(4, available_today)
         first_date_count = sum(slot["date"] == slots[0]["date"] for slot in slots)
         self.assertEqual(first_date_count, expected_today or 4)
+
+    def test_scheduler_starts_from_requested_datetime(self):
+        start_at = "2099-06-18T23:30"
+        slots = planejar_melhores_slots(3, perfil_id=999999, start_at=start_at)
+        self.assertEqual(len(slots), 3)
+        self.assertTrue(all(f"{slot['date']}T{slot['time']}" > start_at for slot in slots))
+
     def test_youtube_url_validation_accepts_only_supported_hosts(self):
         self.assertTrue(validar_url_canal("https://www.youtube.com/@canal"))
         self.assertTrue(validar_url_canal("https://youtu.be/video"))
@@ -556,6 +591,42 @@ class CoreContractsTests(unittest.TestCase):
         self.assertEqual(row["status"], "falhou")
         self.assertEqual(row["erro"], "timeout")
         self.assertEqual(row["descricao_publicacao"], "Descrição editorial")
+
+    def test_cycle_metadata_replacement_is_word_bounded_and_job_scoped(self):
+        job_id = f"job-replace-{uuid4().hex}"
+        other_job_id = f"job-other-{uuid4().hex}"
+        first = create_cut(job_id, "video-replace", "source.mp4", {"inicio": 1, "fim": 3, "titulo": "Varenga no título", "descricao_publicacao": "A família Varenga chegou."})
+        second = create_cut(job_id, "video-replace", "source.mp4", {"inicio": 4, "fim": 6, "titulo": "Varengas não deve mudar", "descricao_publicacao": "Varenga e varenga."})
+        untouched = create_cut(other_job_id, "video-replace", "source.mp4", {"inicio": 7, "fim": 9, "titulo": "Varenga fora do ciclo", "descricao_publicacao": "Varenga."})
+        try:
+            result = replace_cut_cycle_metadata(job_id, "Varenga", "Alvarenga")
+            rows = {row["id"]: row for row in list_cuts(perfil_id=1) if row["id"] in {first, second, untouched}}
+            self.assertEqual(result["cuts"], 2)
+            self.assertEqual(rows[first]["titulo"], "Alvarenga no título")
+            self.assertEqual(rows[first]["descricao_publicacao"], "A família Alvarenga chegou.")
+            self.assertEqual(rows[second]["titulo"], "Varengas não deve mudar")
+            self.assertEqual(rows[second]["descricao_publicacao"], "Alvarenga e Alvarenga.")
+            self.assertEqual(rows[untouched]["titulo"], "Varenga fora do ciclo")
+        finally:
+            conn = __import__("core.database", fromlist=["get_connection"]).get_connection()
+            conn.execute("DELETE FROM cortes_gerados WHERE id IN (?, ?, ?)", (first, second, untouched))
+            conn.commit()
+            conn.close()
+
+    def test_cut_caption_transcript_is_persisted_by_cut(self):
+        job_id = f"job-caption-transcript-{uuid4().hex}"
+        cut_id = create_cut(job_id, "video-caption", "source.mp4", {"inicio": 1, "fim": 3, "titulo": "Corte"})
+        try:
+            saved = save_cut_caption_transcript(cut_id, [{"indice": 2, "inicio": 1.2, "fim": 2.4, "texto": "Texto corrigido"}])
+            self.assertEqual(saved, 1)
+            self.assertEqual(list_cut_caption_transcript(cut_id)[0]["texto"], "Texto corrigido")
+            self.assertEqual(list_cut_caption_transcript(cut_id)[0]["inicio"], 1.2)
+        finally:
+            conn = __import__("core.database", fromlist=["get_connection"]).get_connection()
+            conn.execute("DELETE FROM cortes_transcricao_editada WHERE cut_id=?", (cut_id,))
+            conn.execute("DELETE FROM cortes_gerados WHERE id=?", (cut_id,))
+            conn.commit()
+            conn.close()
 
     def test_repositories_isolate_opportunities_and_cuts_by_profile(self):
         profile_a = 10000 + uuid4().int % 1000000

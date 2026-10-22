@@ -35,6 +35,7 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [x] Metadados editoriais: títulos sem evidência ou genéricos como "A gente" são rejeitados antes da publicação, recebem fallback baseado no conteúdo do corte e o enriquecimento orienta Open Loop/conflito ancorado no tema do vídeo pai.
 - [x] Fallback editorial de títulos: fillers iniciais são removidos, o texto é limitado a até oito palavras com reticências quando necessário e recebe o prefixo "Momento:".
 - [x] Integridade de agendamento: rotas individuais e em lote recusam cortes cujo MP4 não existe ou está vazio no disco.
+- [x] Publicação sem vídeo relacionado: o menu oferece “Nenhum vídeo relacionado”, persiste `sem_relacao` sem `NULL` e diferencia falha de geração de falha de publicação; quando o YouTube aceita o upload antes de uma falha local, o ID externo aparece na notificação.
 - [x] Auto-cura de cortes: a listagem valida arquivos concluídos e converte registros sem MP4 válido para `falhou`, preservando-os para exclusão ou reprocessamento.
 - [x] Unificação da renderização CPU: `core/cutter.py` e `core/media_tools.py` usam `montar_comando_render()` com seek preciso (`-ss` pós-input), `-t` relativo, `-avoid_negative_ts make_zero`, `libx264/faster/CRF 20`, bicubic, `yuv420p` explícito e AAC 160k.
 - [x] Seleção de encoder com segurança: `SHORTS_ENCODER=auto` prioriza `h264_amf` quando anunciado pelo FFmpeg e repete uma vez com `libx264` somente em falhas reconhecíveis de AMF/device; render real na Radeon e benchmark permanecem pendentes.
@@ -143,7 +144,54 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [x] Regeração após exclusão: cortes com status `excluido`, `falhou` ou `cancelado` não bloqueiam novas janelas; somente intervalos ativos participam da deduplicação entre ciclos.
 - [x] Smart crop para planos abertos: detector facial amostra cinco posições do trecho, aceita faces menores e prioriza a maior detecção; sem rosto, o fallback vertical usa o quarto superior da sobra do crop.
 - [ ] Enquadramento editorial por confiança facial: classificar cada trecho como uma face estável, múltiplas faces ou plano amplo; uma única face estável deve receber crop 9:16 acompanhando o rosto, enquanto múltiplas faces ou ausência de face usam composição horizontal com fundo desfocado.
-- [ ] Legendas automáticas por corte: gerar cues relativos a partir dos segmentos Whisper, converter para ASS com estilos selecionáveis, renderizar como etapa opcional do corte e persistir estilo, arquivo de legenda, versão e status para retry idempotente.
+- [x] Legendas automáticas por corte: cues relativos dos segmentos Whisper, timestamps por palavra com karaoke ASS e fallback para cues segmentados, galeria JSON por perfil com presets protegidos, fontes TTF/OTF/TTC isoladas por perfil via `fontsdir`, painel de opcionais recolhido por padrão com preview integrado, validação de allowlists, preview e render usando a mesma configuração, snapshot imutável por corte, job assíncrono, saída MP4 separada, acesso para download e persistência de status/erro; versionamento formal do renderer e invalidação por mudança de transcrição/estilo permanecem pendentes.
+- [x] Cards de cortes em processamento: enquanto legenda, renderização, postagem/agendamento ou regeneração de título/descrição está ativa, o card afetado substitui preview e ações por etapa, barra de progresso, percentual e ETA; jobs em lote marcam somente os cortes envolvidos e o polling atualiza apenas esses cards. Jobs restaurados preservam timestamps/checkpoint para recalcular ETA, e legendas filtram explicitamente os segmentos dentro do intervalo do corte.
+- [x] Preview pós-legenda: após a conclusão do job, o `<video>` do card usa a rota `captions=1`, alinhando a prévia ao arquivo legendado já usado pelo download.
+- [x] Centralização horizontal independente: o editor de legendas oferece um comando que leva a legenda para X=50% sem alterar a posição vertical escolhida.
+- [x] Leitura da transcrição no ajuste de legenda: o modal permite abrir os segmentos do próprio corte com timestamps relativos para conferir e corrigir palavras antes da geração.
+- [x] Edição persistida da transcrição no corte: o leitor permite corrigir cada segmento e salvar antes da geração; a correção fica isolada no corte e preserva os timestamps originais.
+- [x] Contraste do leitor de transcrição: campos editáveis usam o tema escuro do modal e estados sem segmentos explicam quando é necessário transcrever novamente ou enviar SRT.
+- [x] Opção sem vídeo relacionado como item selecionável no topo do picker, com confirmação pelo mesmo fluxo dos vídeos e remoção suportada na Biblioteca.
+- [x] Publicação de cortes legendados: quando a legenda está concluída, o upload usa obrigatoriamente o MP4 legendado e bloqueia se o arquivo não existir; o histórico registra o caminho enviado.
+- [x] Agendamento inteligente a partir de data/hora: o usuário define o início e a IA escolhe os melhores horários posteriores individualmente para os cortes.
+- [x] Relacionamento com vídeos agendados: vídeos em estado `programado` ou `agendado` aparecem no picker de relacionados, mantendo privados e excluídos fora da seleção.
+- [x] Progresso de postagem dos cortes: a barra geral permanece visível para jobs individuais e em massa, e os IDs dos cortes são persistidos para restaurar o acompanhamento após recarregar.
+- [x] Idempotência da publicação legendada: um upload anterior do original não bloqueia o reenvio quando existe uma versão legendada concluída diferente.
+- [x] Deduplicação por ciclo: antes de publicar, o sistema procura Shorts com o mesmo título ou descrição e confirma no YouTube se o ID ainda existe; registros locais falsos não bloqueiam o envio.
+- [x] Limpeza da fila no executável `GrowthEnginePainel`: botão de manutenção remove jobs concluídos, falhos, cancelados ou rejeitados e preserva jobs ativos.
+- [x] Robustez do vídeo relacionado: o fluxo do Studio detecta a tela genérica “Ops! Algo deu errado”, tenta recarregar até três vezes e salva diagnóstico na falha definitiva.
+- [x] Retry manual de vídeo relacionado: a Biblioteca mostra “Tentar relação novamente” quando a aplicação falha e reenvia a relação sem republicar o Short.
+- [x] Menu de legendas minimalista: preview vem antes dos controles, ajustes essenciais ficam visíveis e fonte/contorno/cores ficam em “Ajustes avançados”.
+- [x] Campos numéricos de legendas: tamanho em pixels e opacidade do fundo em porcentagem podem ser digitados e permanecem sincronizados com os sliders.
+- [x] Atualização do asset da interface de legendas: versão do `app.js` incrementada para evitar que o navegador mantenha o menu antigo em cache.
+- [x] Substituição de palavras por ciclo: a Central permite trocar uma palavra ou expressão simultaneamente em títulos e descrições de todos os cortes de um `job_id`, com escopo isolado e confirmação.
+- [x] Áudio inesperado ao abrir corte corrigido: o preview ampliado não inicia mais automaticamente e vídeos anteriores são pausados antes de abrir outro corte.
+- [x] Preview auxiliar de legendas silenciado: o vídeo usado como fundo visual inicia somente com `muted`, `defaultMuted` e volume zero, sem áudio ao abrir a Central.
+- [x] Seleção e legendas em massa: o botão individual passou de `Postar` para `Selecionar`; ciclos exibem `Gerar legendas` somente com pelo menos dois cortes selecionados, reutilizando o modal de estilo e acompanhando cada job no card correspondente.
+- [x] Validação da saída legendada: cada job usa um nome de arquivo único e falha explicitamente quando o MP4 produzido é idêntico ao corte sem legendas, evitando marcar saída stale como concluída.
+- [x] ETA de legendas sem projeção falsa: como o renderizador ainda não publica progresso contínuo durante o FFmpeg, jobs `caption_render` exibem ETA calculando em vez de extrapolar os 10% iniciais para dezenas de minutos.
+- [x] ETA estimado de legendas restaurado: jobs persistem uma estimativa baseada na duração do corte e a interface exibe contagem regressiva rotulada como `ETA estimado`, sem confundir a previsão com progresso real do FFmpeg.
+- [x] Renderização de legendas otimizada: quando o MP4 do corte já existe, o ASS é aplicado diretamente sobre esse arquivo com timestamps relativos, evitando reabrir e decodificar o vídeo original inteiro; a estimativa cai de aproximadamente 5,3x para 1,5x a duração do corte.
+- [x] Visualização do corte em tamanho real: o controle de expandir fica sobreposto ao preview de cada card renderizado e abre um popup com player vertical ampliado e controles próprios.
+- [x] Escala de legendas corrigida: os scripts ASS passam a declarar referência `1080x1920`, evitando que o libass infira uma escala excessiva e gere legendas enormes.
+- [x] Regeneração de legendas refletida no preview: a URL do vídeo usa a versão do novo arquivo e a rota MP4 desabilita cache, garantindo que escolhas alteradas carreguem o MP4 legendado recém-gerado.
+- [x] Controle de tamanho real refinado: o botão textual foi substituído por um ícone de expandir sobreposto no canto inferior direito do player, junto ao menu nativo de três pontos.
+- [x] Fullscreen nativo do preview: o ícone chama `requestFullscreen()` no próprio elemento de vídeo, com popup como fallback; o contêiner deixou de ser esticado pela coluna de ações.
+- [x] Alinhamento do controle fullscreen: ícone fixado na faixa inferior do player, imediatamente à esquerda do menu nativo de três pontos.
+- [x] Fullscreen vertical corrigido: o contêiner do preview entra em tela cheia e mantém o vídeo centralizado em `9:16`, com fundo preto nas laterais.
+- [x] Cores de legendas configuráveis: os menus de opcionais e de geração de legendas permitem definir texto, destaque/karaokê, contorno, fundo e opacidade; as escolhas são persistidas no estilo e aplicadas ao ASS/MP4.
+- [x] Validação de stroke corrigida: nomes legados e cores HEX são aceitos, e erros de posição, cor ou espessura são reportados separadamente.
+- [x] Overflow horizontal de legendas corrigido: linhas comuns e karaoke respeitam largura segura proporcional ao tamanho da fonte, com margens ASS ampliadas e quebra automática antes de cortar nas bordas.
+- [x] Preview interativo de legendas: menus de ajuste usam a imagem/vídeo real do corte, refletem tamanho e cores em tempo real e enviam as coordenadas X/Y exatas do arraste ao renderizador.
+- [x] Tamanho contínuo e centralização no preview: slider de 32 a 96px com valor visível e comando para centralizar a legenda no frame.
+- [x] Escala fiel da prévia: fonte, stroke e sombras são proporcionais à largura 1080 do render ASS, com frame responsivo 9:16 e atualização ao redimensionar.
+- [x] Posição manual fiel no render: coordenadas arrastadas usam âncora ASS central (`\\an5`) junto de `\\pos`, igualando o ponto de referência do preview.
+- [x] Legenda grande em uma linha: tamanho ampliado até 160px e opção “Uma linha” no preview e no render, inclusive para karaoke, sem quebra automática.
+- [x] Uma linha sem corte: quando o texto excede a largura segura, preview e ASS reduzem automaticamente a fonte daquela legenda até caber inteira na tela.
+- [x] Cores com visual e atalhos: campos de cor exibem a amostra atual e oferecem círculos rápidos para cores principais, sincronizados com HEX, preview e render.
+- [x] Semântica de cores do karaoke esclarecida: “Cor base” é branca para palavras não ativas e “Cor destaque” é amarela para a palavra ativa, com mapeamento corrigido no ASS.
+- [x] Prévia de uma linha corrigida: o ajuste usa a largura renderizada real do texto para evitar corte visual nas bordas.
+- [x] Linha única pós-layout: o encaixe é recalculado depois que o modal assume suas dimensões reais e usa margem interna conservadora para evitar cortes.
 - [x] Fallback profissional sem rosto: planos sem coordenadas faciais usam vídeo ajustado ao centro sobre fundo preenchido e desfocado via `filter_complex`, com saída `[outv]` mapeada para AMF/CPU.
 - [x] Filtro de fallback otimizado: o vídeo é dividido uma vez, o fundo é desfocado em resolução reduzida e ampliado antes do overlay, reduzindo o custo de renderização sem mudar o enquadramento.
 - [x] Painel residente na bandeja: minimizar ou fechar a janela oculta o GUI da barra de tarefas, com restauração e saída pelo ícone do Growth Engine.
