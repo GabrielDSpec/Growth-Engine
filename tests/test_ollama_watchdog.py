@@ -420,6 +420,26 @@ class OllamaWatchdogTests(unittest.TestCase):
         self.assertEqual(len(resultado["diagnostico"]), 1)
         self.assertEqual(resultado["diagnostico"][0]["status"], "editorial_unavailable")
 
+    def test_falha_de_conexao_em_todos_os_steps_nao_e_insuficiencia_editorial(self):
+        segmentos = [
+            {"indice": index, "inicio": index * 60, "fim": (index + 1) * 60, "texto": f"Frase relevante numero {index}."}
+            for index in range(8)
+        ]
+        falha = requests.ConnectionError("HTTPConnectionPool(host='localhost', port=11434): conexão recusada")
+        with patch("core.cutter._gerar_resposta_ollama", side_effect=falha), patch("core.cutter.OLLAMA_CUTS_ENABLED", True):
+            resultado = gerar_cortes_com_retry(
+                " ".join(segmento["texto"] for segmento in segmentos),
+                480,
+                segmentos,
+                minimo=3,
+                duracao_minima=10,
+                duracao_maxima=60,
+                cancel_callback=lambda: False,
+            )
+        self.assertEqual(resultado["status"], "failed")
+        self.assertEqual(resultado["diagnostico"][-1]["status"], "editorial_unavailable")
+        self.assertIn("Ollama não respondeu", resultado["rejeicoes"][0])
+
     def test_cache_miss_usa_diretor_de_tv_em_uma_unica_chamada(self):
         segmentos = [
             {"indice": index, "inicio": index * 10, "fim": (index + 1) * 10, "texto": f"Frase completa numero {index}."}

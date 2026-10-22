@@ -108,6 +108,7 @@ Separar a análise editorial da renderização dos cortes, preservando em um dos
 - [x] Limite máximo de cortes: a validação final rejeita intervalos acima da duração máxima configurada, evitando que candidatos de mais de 60 segundos sejam persistidos ou renderizados.
 - [x] Revisão transcricional com evidência: o modal permite ouvir o intervalo real do áudio e editar manualmente a sugestão antes de salvar a decisão.
 - [x] Timestamp visível na revisão: cada cartão de correção exibe os horários de início e fim logo abaixo do player do segmento.
+- [x] Diagnóstico de curadoria indisponível: falhas de conexão do Ollama em todos os steps não são mais exibidas como curadoria insuficiente; o job informa que a IA precisa estar disponível.
 - [x] Regeneração pós-revisão: o endpoint invalida o dossiê anterior e enfileira automaticamente o editorial final, com polling visual do job.
 - [x] Substituição de palavras por ciclo: o cabeçalho do ciclo permite trocar uma palavra ou expressão em todos os títulos e descrições do job, somente em palavras completas e sem afetar outros ciclos.
 - [x] Tamanho contínuo e centralização: slider de 32 a 96px atualiza a prévia em tempo real, e o comando de centralização reposiciona a legenda no centro do frame.

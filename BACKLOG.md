@@ -63,6 +63,7 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [x] Limite máximo de cortes: a validação final rejeita intervalos acima da duração máxima configurada, evitando que candidatos de mais de 60 segundos sejam persistidos ou renderizados.
 - [x] Revisão transcricional com evidência: o modal permite ouvir o intervalo real do áudio e editar manualmente a sugestão antes de salvar a decisão.
 - [x] Timestamp visível na revisão: cada cartão de correção exibe os horários de início e fim logo abaixo do player do segmento.
+- [x] Diagnóstico de curadoria indisponível: falhas de conexão do Ollama em todos os steps não são mais exibidas como curadoria insuficiente; o job informa que a IA precisa estar disponível.
 - [x] Reinício do servidor no EXE: `GROWTH_ENGINE_ROOT` mantém painel, servidor e SQLite apontando para a raiz externa do projeto, evitando `unable to open database` na pasta temporária do PyInstaller.
 - [x] Retomada editorial por janela: o dossiê parcial marca `running`, persiste steps concluídos e, após reinício, o mapper reprocessa somente steps ausentes ou falhos; o job operacional recebe o cursor a cada janela.
 - [x] Contratos de curadoria sincronizados: testes não aceitam mais candidatos locais quando a resposta editorial está vazia ou o Ollama está desativado; o retry corretivo de schema permanece coberto.

@@ -1265,7 +1265,7 @@ Retorne um objeto com `resumo_conteudo` e `melhores_momentos`; substitua todos o
         except (json.JSONDecodeError, requests.RequestException, TypeError, AttributeError, ValueError) as error:
             if isinstance(error, EditorialResponseParseError):
                 ultimo_erro_parse = error
-            diagnosticos.append({"step": numero, "inicio": inicio_bloco, "fim": fim_bloco, "candidatos": 0, "status": "failed", "erro": str(error)})
+            diagnosticos.append({"step": numero, "inicio": inicio_bloco, "fim": fim_bloco, "candidatos": 0, "status": "failed", "erro": str(error), "erro_tipo": type(error).__name__})
         finally:
             registrar_log(f"PROFILE inferencia_ollama step={numero} segundos={time.time() - inferencia_started_at:.2f}")
     if not candidatos_totais and ultimo_erro_parse:
@@ -1387,6 +1387,14 @@ def gerar_cortes_com_retry(transcricao_texto, duracao_total_seg, segmentos=None,
                     partial_callback=partial_callback,
                     resume_analysis=None,
                 )
+            provider_error_types = {"ConnectionError", "HTTPError", "RequestException", "Timeout"}
+            provider_failures = [item for item in diagnosticos_editoriais if item.get("status") == "failed"]
+            provider_unavailable = bool(provider_failures) and len(provider_failures) == len(diagnosticos_editoriais) and all(item.get("erro_tipo") in provider_error_types for item in provider_failures)
+            if provider_unavailable:
+                erro_editorial = provider_failures[-1].get("erro", "Ollama indisponível")
+                rejeicao = f"Curadoria editorial indisponível: Ollama não respondeu; nenhum corte foi renderizado. ({erro_editorial})"
+                diagnostico_final = {"tentativa": 1, "candidatos": 0, "aceitos": 0, "status": "editorial_unavailable", "erro": erro_editorial, "minimo": minimo_exigido}
+                return {"status": "failed", "cortes": [], "candidatos": [], "editorial_candidatos": [], "diagnostico": diagnosticos_editoriais + [diagnostico_final], "rejeicoes": [rejeicao], "minimo": minimo_exigido, "steps_total": steps_total, "steps_completed": steps_completed}
             rejeicao = f"Curadoria editorial insuficiente ({len(candidatos_editoriais)}/{minimo_exigido}); nenhum corte foi renderizado."
             ultimo_diagnostico = diagnosticos_editoriais[-1] if diagnosticos_editoriais else {}
             erro_editorial = ultimo_diagnostico.get("erro", "empty_editorial_response; resposta editorial sem candidatos válidos")
