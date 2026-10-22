@@ -13,7 +13,7 @@ from tqdm import tqdm
 from core.media_tools import MediaToolError, _executar_render_com_fallback, _run, localizar_ferramentas, montar_comando_render, obter_duracao
 from core.config import DIRETORIO_PROJETO, PASTA_LONGOS, PASTA_SHORTS, PASTA_ARQUIVO, obter_pastas_midia
 from core.utils import registrar_log, carregar_cache_metadados, salvar_cache_metadados, calcular_hash_arquivo
-from core.transcriber import transcrever_arquivo_local_segmentos
+from core.transcriber import transcrever_arquivo_local_segmentos, validar_correcoes_no_audio
 
 MIN_CORTES_PADRAO = 1
 MAX_CORTES_SOLICITADOS = 12
@@ -503,7 +503,7 @@ def _candidatos_para_revisao(candidatos, segmentos, duracao_total_seg, duracao_m
             continue
         inicio = selecionados[0]["inicio"]
         fim = selecionados[-1]["fim"]
-        if not (0 <= inicio < fim <= duracao_total_seg) or fim - inicio < duracao_minima:
+        if not (0 <= inicio < fim <= duracao_total_seg) or not duracao_minima <= fim - inicio <= duracao_maxima:
             continue
         intervalo = (inicio, fim)
         if intervalo in vistos:
@@ -797,6 +797,7 @@ def _extrair_indice_editorial(resposta, minimo_capitulos=1):
             continue
         indice.append({
             "titulo": str(item.get("titulo") or item.get("capitulo") or f"Capítulo {len(indice) + 1}"),
+            "descricao": str(item.get("descricao") or item.get("description") or "").strip(),
             "inicio": inicio,
             "fim": fim,
         })
@@ -807,6 +808,77 @@ def _extrair_indice_editorial(resposta, minimo_capitulos=1):
     resultado = EditorialIndex(indice)
     resultado.resumo_conteudo = str(resumo_conteudo or "").strip()
     return resultado
+
+
+def corrigir_transcricao_com_contexto(segmentos, capitulos, titulo_original="", caminho_audio="", cancel_callback=None):
+    """Propõe correções de transcrição usando o contexto editorial sem alterar a fonte original."""
+    schema = {
+        "type": "object",
+        "required": ["correcoes"],
+        "properties": {"correcoes": {"type": "array", "items": {
+            "type": "object",
+            "required": ["indice", "texto_corrigido", "motivo", "confianca"],
+            "properties": {
+                "indice": {"type": "integer"},
+                "texto_corrigido": {"type": "string"},
+                "motivo": {"type": "string"},
+                "confianca": {"type": "number"},
+            },
+            "additionalProperties": False,
+        }}},
+        "additionalProperties": False,
+    }
+    contexto = "\n".join(
+        f"- {capitulo.get('inicio', 0):.1f}s-{capitulo.get('fim', 0):.1f}s: {capitulo.get('titulo', '')} | {capitulo.get('descricao', '')}"
+        for capitulo in capitulos
+    )
+    texto = "\n".join(f"[{segmento.get('indice')}] {segmento.get('inicio', 0):.3f}-{segmento.get('fim', 0):.3f}: {segmento.get('texto', '')}" for segmento in segmentos)
+    prompt = f"""Você é um revisor conservador de transcrição em português.
+Use o editorial apenas para detectar possíveis nomes próprios, termos técnicos ou palavras incompatíveis com o contexto.
+Corrija somente erros muito prováveis; não reescreva estilo, não resuma e não invente falas.
+Retorne somente correções com confiança >= 0.85. Se não houver correções, retorne uma lista vazia.
+Cada índice deve corresponder exatamente ao índice de um segmento fornecido.
+
+VÍDEO: {titulo_original or 'não informado'}
+CONTEXTO EDITORIAL:
+{contexto[:12000]}
+
+TRANSCRIÇÃO:
+{texto[:30000]}
+"""
+    resposta = _gerar_resposta_ollama(prompt, cancel_callback=cancel_callback, timeout=_calcular_timeout_ollama(max(60, len(segmentos))), json_schema=schema, num_ctx=16384)
+    if resposta.get("status_code") != 200:
+        raise requests.RequestException(f"Ollama HTTP {resposta.get('status_code')}")
+    payload = _reparar_json_ollama(_texto_bruto_ollama(resposta))
+    propostas = payload.get("correcoes", []) if isinstance(payload, dict) else []
+    try:
+        propostas = validar_correcoes_no_audio(caminho_audio, segmentos, propostas, cancel_callback=cancel_callback)
+    except Exception:
+        propostas = [{**proposta, "audio_verificacao": "erro"} for proposta in propostas]
+    por_indice = {int(segmento.get("indice")): segmento for segmento in segmentos if segmento.get("indice") is not None}
+    corrigidos = [dict(segmento) for segmento in segmentos]
+    aplicadas = []
+    for proposta in propostas if isinstance(propostas, list) else []:
+        try:
+            indice = int(proposta.get("indice"))
+            confianca = float(proposta.get("confianca", 0))
+        except (TypeError, ValueError):
+            continue
+        texto_corrigido = str(proposta.get("texto_corrigido") or "").strip()
+        if indice not in por_indice or not texto_corrigido or confianca < 0.85:
+            continue
+        original = por_indice[indice].get("texto", "")
+        if texto_corrigido == original:
+            continue
+        audio_divergente = proposta.get("audio_verificacao") == "divergente"
+        registro = {"indice": indice, "inicio": por_indice[indice].get("inicio"), "fim": por_indice[indice].get("fim"), "original": original, "corrigido": texto_corrigido, "motivo": str(proposta.get("motivo") or ""), "confianca": confianca, "audio_verificacao": proposta.get("audio_verificacao", "indisponivel"), "audio_texto": proposta.get("audio_texto", ""), "audio_similaridade": proposta.get("audio_similaridade"), "aceita": not audio_divergente}
+        if audio_divergente:
+            aplicadas.append(registro)
+            continue
+        alvo = next(segmento for segmento in corrigidos if int(segmento.get("indice")) == indice)
+        alvo["texto"] = texto_corrigido
+        aplicadas.append(registro)
+    return corrigidos, aplicadas
 
 
 def _extrair_bolhas_editoriais(resposta):
@@ -880,8 +952,8 @@ def _gerar_indice_editorial_estrutural(transcricao_texto, duracao_total_seg, seg
         "type": "object",
         "required": ["marcadores"],
         "properties": {"marcadores": {"type": "array", "minItems": 1, "items": {
-            "type": "object", "required": ["titulo", "inicio_segundos", "fim_segundos"],
-            "properties": {"titulo": {"type": "string"}, "inicio_segundos": {"type": "number"}, "fim_segundos": {"type": "number"}},
+            "type": "object", "required": ["titulo", "descricao", "inicio_segundos", "fim_segundos"],
+            "properties": {"titulo": {"type": "string"}, "descricao": {"type": "string"}, "inicio_segundos": {"type": "number"}, "fim_segundos": {"type": "number"}},
             "additionalProperties": False,
         }}},
         "additionalProperties": False,
@@ -918,8 +990,8 @@ JANELA {numero}:
     consolidacao_schema = {
         "type": "object", "required": ["resumo_conteudo", "capitulos"],
         "properties": {"resumo_conteudo": {"type": "string"}, "capitulos": {"type": "array", "minItems": minimo_capitulos, "maxItems": maximo_capitulos, "items": {
-            "type": "object", "required": ["titulo", "inicio_segundos", "fim_segundos"],
-            "properties": {"titulo": {"type": "string"}, "inicio_segundos": {"type": "number"}, "fim_segundos": {"type": "number"}},
+            "type": "object", "required": ["titulo", "descricao", "inicio_segundos", "fim_segundos"],
+            "properties": {"titulo": {"type": "string"}, "descricao": {"type": "string"}, "inicio_segundos": {"type": "number"}, "fim_segundos": {"type": "number"}},
             "additionalProperties": False,
         }}}, "additionalProperties": False,
     }
@@ -928,7 +1000,7 @@ Agrupe somente bolhas adjacentes quando elas tratarem do mesmo assunto. Preserve
 Gere entre {minimo_capitulos} e {maximo_capitulos} capítulos, cobrindo do início ao fim.
 Não elimine capítulos só porque há música; música pode estar dentro do capítulo do show ou ser um capítulo próprio quando mudar a etapa do evento.
 Os horários devem ser escolhidos exclusivamente entre os limites das bolhas abaixo. Não invente, arredonde ou desloque timestamps.
-Cada título deve seguir "Tema: detalhe específico". Não gere cortes, ganchos, scores ou descrições promocionais.
+Cada título deve seguir "Tema: detalhe específico". Escreva uma descrição factual de uma ou duas frases para cada capítulo, explicando o que acontece naquele intervalo. Não gere cortes, ganchos, scores ou descrições promocionais.
 Retorne somente JSON com resumo_conteudo e capitulos.
 
 VÍDEO: {titulo_original or 'não informado'} ({duracao:.1f}s)
@@ -964,7 +1036,7 @@ Retorne exclusivamente JSON puro neste formato:
 {{
   "resumo_conteudo": "Consolidação factual do conteúdo geral em 3 a 5 frases.",
     "capitulos": [
-    {{"titulo": "A missão: assunto específico do trecho", "inicio_segundos": 0.0, "fim_segundos": 60.0}}
+    {{"titulo": "A missão: assunto específico do trecho", "descricao": "Descrição factual do que acontece neste intervalo.", "inicio_segundos": 0.0, "fim_segundos": 60.0}}
   ]
 }}
 
@@ -975,7 +1047,7 @@ REGRAS:
 - Os capítulos devem cobrir a linha do tempo inteira sem inventar eventos ou timestamps.
 - Crie um novo capítulo sempre que houver mudança de local, atividade, pessoa, objetivo, etapa do evento, equipamento, clima, apresentação ou encerramento. Não agrupe várias mudanças em um capítulo genérico.
 - Use somente os limites dos segmentos fornecidos.
-- O capítulo contém somente um título de sumário e intervalo; não escreva descrição de corte, gancho, score, seleção de melhores momentos ou análise promocional.
+- O capítulo contém título, descrição factual e intervalo; não escreva descrição de corte, gancho, score, seleção de melhores momentos ou análise promocional.
 - Nunca use chaves ou conceitos como `melhores_momentos`, `cortes`, `gancho`, `score`, `descricao_publicacao` ou `Vaca Roxa`.
 - Não retorne a transcrição, não copie falas e não crie capítulos artificiais para preencher quantidade.
 - Música sem conteúdo pode ser marcada como "Intervalo musical" apenas quando ocupar uma faixa contínua real.
@@ -997,9 +1069,10 @@ TRANSCRIÇÃO COMPLETA:
                             "maxItems": maximo_capitulos,
                 "items": {
                     "type": "object",
-                    "required": ["titulo", "inicio_segundos", "fim_segundos"],
+                    "required": ["titulo", "descricao", "inicio_segundos", "fim_segundos"],
                     "properties": {
                         "titulo": {"type": "string"},
+                        "descricao": {"type": "string"},
                         "inicio_segundos": {"type": "number"},
                         "fim_segundos": {"type": "number"},
                     },
@@ -1024,7 +1097,7 @@ Leia novamente o material abaixo e retorne somente um objeto JSON válido com es
 {{
   "resumo_conteudo": "Resumo factual do vídeo inteiro em 3 a 5 frases.",
   "capitulos": [
-    {{"titulo": "Nome do capítulo", "inicio_segundos": 0.0, "fim_segundos": 60.0}}
+    {{"titulo": "Nome do capítulo", "descricao": "Descrição factual do intervalo.", "inicio_segundos": 0.0, "fim_segundos": 60.0}}
   ]
 }}
 Os capítulos devem usar apenas limites presentes na transcrição, cobrir o vídeo inteiro e conter pelo menos {minimo_capitulos} itens. Para vídeos longos, seja proporcionalmente detalhista.

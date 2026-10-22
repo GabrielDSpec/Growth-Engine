@@ -15,7 +15,7 @@ from pathlib import Path
 from core.config import obter_pastas_midia
 
 
-DOSSIER_SCHEMA_VERSION = 1
+DOSSIER_SCHEMA_VERSION = 2
 DOSSIER_ALGORITHM_VERSION = "dossier-v5-global-index-then-cut-editorial"
 _LOCKS = {}
 _LOCKS_GUARD = threading.Lock()
@@ -220,7 +220,11 @@ def build_dossier(video_id, perfil_id, source_path, segments, duration_seconds, 
             continue
         if fim <= inicio:
             continue
-        chapters.append({"id": f"chapter-{index:04d}", "titulo": str(chapter.get("titulo") or f"Capítulo {index}"), "inicio": inicio, "fim": fim})
+        titulo = str(chapter.get("titulo") or f"Capítulo {index}")
+        descricao = str(chapter.get("descricao") or chapter.get("description") or "").strip()
+        if not descricao:
+            descricao = f"Trecho do vídeo sobre {titulo.casefold()}."
+        chapters.append({"id": f"chapter-{index:04d}", "titulo": titulo, "descricao": descricao, "inicio": inicio, "fim": fim})
     textos = [str(segment.get("texto") or "").strip() for segment in segments if segment.get("texto")]
     resumo_global = analysis.get("resumo_conteudo") or parameters.get("resumo_global") or (
         " ".join(textos) if len(textos) <= 16 else " ".join(textos[:8] + ["..."] + textos[-8:])

@@ -30,6 +30,7 @@ from PIL import Image, ImageDraw
 
 
 ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+os.environ.setdefault("GROWTH_ENGINE_ROOT", str(ROOT))
 DB_PATH = ROOT / "core" / "canal_inteligencia.db"
 SERVER_URL = "http://127.0.0.1:4174"
 OLLAMA_URL = "http://127.0.0.1:11434"
@@ -465,6 +466,7 @@ class ControlPanel(ctk.CTk):
         self.server_process = subprocess.Popen(
             [str(python_executable), str(ROOT / "iniciar_servidor.py")],
             cwd=ROOT,
+            env={**os.environ, "GROWTH_ENGINE_ROOT": str(ROOT)},
             creationflags=creationflags,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

@@ -1,6 +1,6 @@
 import os
 
-DIRETORIO_PROJETO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+DIRETORIO_PROJETO = os.path.abspath(os.environ.get("GROWTH_ENGINE_ROOT") or os.path.join(os.path.dirname(__file__), ".."))
 PASTA_LONGOS = os.path.join(DIRETORIO_PROJETO, "pracortar")
 PASTA_SHORTS = os.path.join(DIRETORIO_PROJETO, "shorts")
 PASTA_ARQUIVO = os.path.join(DIRETORIO_PROJETO, "arquivados")

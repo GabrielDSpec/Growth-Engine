@@ -8,6 +8,22 @@ from core.editorial_mapper import build_dossier, build_semantic_heatmap, harvest
 
 
 class EditorialMapperTests(unittest.TestCase):
+    def test_build_dossier_persists_chapter_description(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "video.mp4"
+            source.write_bytes(b"video")
+            with patch("core.editorial_mapper.obter_pastas_midia", return_value={"editorial_dossiers": directory}):
+                dossier = build_dossier(
+                    "video-1",
+                    1,
+                    str(source),
+                    [{"inicio": 0, "fim": 10, "texto": "fala"}],
+                    10,
+                    "",
+                    {"capitulos": [{"titulo": "Introdução", "descricao": "O vídeo apresenta o contexto.", "inicio": 0, "fim": 10}]},
+                )
+            self.assertEqual(dossier["capitulos"][0]["descricao"], "O vídeo apresenta o contexto.")
+
     def test_build_dossier_persists_ranked_moments(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "video.mp4"

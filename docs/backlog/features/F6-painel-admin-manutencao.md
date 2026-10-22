@@ -19,6 +19,7 @@ Disponibilizar manutenção operacional protegida por perfil administrador, sem 
 - Ao abrir o `painel_controle.py`, o Servidor Web é iniciado automaticamente quando necessário; a UI só confirma sucesso após responder em `127.0.0.1:4174`.
 - A aba Serviços oferece controles independentes `Ligar`, `Desligar` e `Reiniciar` para o Servidor Web, além de `Ligar` e `Desligar` para o Ollama, refletindo o estado detectado no polling.
 - O executável usa um mutex nomeado no Windows para impedir múltiplas instâncias visíveis do painel; o par pai/filho observado no PyInstaller one-file é apenas o bootstrap do executável.
+- O executável define `GROWTH_ENGINE_ROOT` para a raiz externa do projeto; o painel e o servidor reiniciado usam essa raiz para localizar o SQLite, evitando dependência da pasta temporária `_MEI` do PyInstaller.
 - No executável frozen, o launcher do Servidor Web usa o Python da `.venv` ao lado do painel, com fallback para `python` no `PATH`, evitando relançar o próprio GUI como processo filho.
 - O painel nativo também oferece `Renovar permissões YouTube`, abrindo `/oauth/google/start?perfil_id=<id>&reauthorize=1` quando o servidor web está online; o executável foi reconstruído e sincronizado para a raiz do projeto.
 - O seletor de vídeo relacionado da postagem imediata envia explicitamente o perfil ativo ao endpoint, garantindo que o menu seja aberto mesmo quando o wrapper global de `fetch` não estiver disponível.

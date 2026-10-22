@@ -2473,6 +2473,78 @@ async function exportTranscription(videoId) {
     showToast(error.message);
   }
 }
+async function openTranscriptionReview(videoId) {
+  const transcription = selectedCutSource?.transcription;
+  const corrections = transcription?.corrections?.aplicadas || [];
+  if (!corrections.length) return;
+  const transcriptionSegments = transcription?.segments || transcription?.segmentos || [];
+  const segmentByIndex = new Map(transcriptionSegments.map(segment => [Number(segment.indice), segment]));
+  const modal = createElement('div', { className: 'cut-modal-backdrop transcription-review-backdrop' });
+  const panel = createElement('section', { className: 'cut-modal transcription-review-modal', role: 'dialog', 'aria-modal': 'true' });
+  const decisions = Object.fromEntries(corrections.map(correction => [String(correction.indice), correction.aceita !== false]));
+  const edits = Object.fromEntries(corrections.map(correction => [String(correction.indice), correction.corrigido || '']));
+  const list = createElement('div', { className: 'transcription-review-list' });
+  corrections.forEach(correction => {
+    const index = String(correction.indice);
+    const status = domText('span', 'transcription-review-decision', 'Manter correção');
+    if (correction.audio_verificacao === 'divergente') status.textContent = 'Áudio divergente';
+    const toggle = domButton('Reverter', 'undo-2', 'secondary', 'toggle-transcription-correction');
+    toggle.addEventListener('click', () => {
+      decisions[index] = !decisions[index];
+      status.textContent = decisions[index] ? 'Manter correção' : 'Usar original';
+      toggle.textContent = decisions[index] ? 'Reverter' : 'Manter';
+    });
+    const editor = createElement('textarea', { className: 'transcription-review-edit', rows: '2', value: correction.corrigido || '', 'data-correction-index': index });
+    editor.value = correction.corrigido || '';
+    editor.addEventListener('input', () => { edits[index] = editor.value; });
+    const sourceSegment = segmentByIndex.get(Number(correction.indice)) || {};
+    const inicio = Number(correction.inicio ?? sourceSegment.inicio);
+    const fim = Number(correction.fim ?? sourceSegment.fim);
+    const segmentPreview = createElement('video', { controls: true, preload: 'metadata', playsinline: true, className: 'transcription-review-audio', src: `/api/cuts/source-file?video_id=${encodeURIComponent(videoId)}&perfil_id=${encodeURIComponent(activeProfileId)}` });
+    if (Number.isFinite(inicio) && Number.isFinite(fim)) {
+      segmentPreview.addEventListener('loadedmetadata', () => { segmentPreview.currentTime = inicio; }, { once: true });
+      segmentPreview.addEventListener('timeupdate', () => { if (segmentPreview.currentTime >= fim) segmentPreview.pause(); });
+    }
+    const segmentTimestamp = domText('small', 'transcription-review-timestamp', Number.isFinite(inicio) && Number.isFinite(fim)
+      ? `Início ${formatCutTranscriptTime(inicio)} • Fim ${formatCutTranscriptTime(fim)}`
+      : 'Timestamp indisponível');
+    list.appendChild(createElement('article', { className: 'transcription-review-item' }, [
+      domText('span', 'transcription-review-index', `Segmento ${Number(correction.indice) + 1}`),
+      createElement('div', { className: 'transcription-review-copy' }, [segmentPreview, segmentTimestamp, domText('small', '', 'Original'), domText('p', '', correction.original || ''), domText('small', '', 'Sugestão corrigida (editável)'), editor, correction.audio_texto ? domText('small', '', `Whisper no áudio: ${correction.audio_texto}`) : null]),
+      createElement('div', { className: 'transcription-review-actions' }, [status, toggle]),
+    ]));
+  });
+  const close = () => modal.remove();
+  panel.appendChild(createElement('div', { className: 'cut-modal-header' }, [domText('h2', '', 'Revisar transcrição'), domButton('Fechar', 'x', 'ghost', 'close-transcription-review')]));
+  panel.appendChild(domText('p', 'schedule-modal-lead', 'Mantenha ou reverta cada sugestão. Depois, gere novamente o editorial para atualizar os capítulos.'));
+  panel.appendChild(list);
+  panel.appendChild(createElement('div', { className: 'schedule-modal-actions' }, [domButton('Cancelar', 'x', 'secondary', 'close-transcription-review'), domButton('Salvar decisões', 'save', 'lime', 'save-transcription-review')]));
+  modal.appendChild(panel);
+  document.body.appendChild(modal);
+  panel.querySelectorAll('[data-action="close-transcription-review"]').forEach(button => button.addEventListener('click', close));
+  panel.querySelector('[data-action="save-transcription-review"]').addEventListener('click', async () => {
+    try {
+      const response = await fetch('/api/transcription/review', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Profile-Id': String(activeProfileId) }, body: JSON.stringify({ video_id: videoId, decisions, edits }) });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível salvar as decisões.');
+      selectedCutSource.transcription = payload.transcription;
+      close();
+      selectedCutSource.has_editorial = false;
+      if (payload.editorial_job_id) {
+        cutJob = { id: payload.editorial_job_id, kind: 'editorial', status: 'queued', progress: 0, message: 'Editorial sendo regenerado', started_at: Date.now(), perfil_id: activeProfileId };
+        rememberActiveJob('editorial', cutJob);
+        showToast('Revisão salva. Editorial sendo regenerado.');
+        pollCutJob();
+      } else {
+        showToast('Revisão salva, mas o editorial ficou pendente na fila.');
+      }
+      renderCuts();
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+  modal.addEventListener('click', event => { if (event.target === modal) close(); });
+}
 async function openEditorialDossier(videoId) {
   if (!videoId) return;
   try {
@@ -2493,9 +2565,11 @@ async function openEditorialDossier(videoId) {
       const end = Number(chapter.fim ?? chapter.fim_segundos);
       const chapterTitle = chapter.titulo || `Capítulo ${index + 1}`;
       const chapterLabel = Number.isFinite(start) ? `${formatElapsedSeconds(start)} - ${chapterTitle}` : chapterTitle;
+      const chapterDescription = chapter.descricao || chapter.description || 'Descrição não disponível.';
       chapterList.appendChild(createElement('article', { className: 'editorial-chapter' }, [
         domText('span', 'editorial-chapter-index', chapterLabel),
         Number.isFinite(end) ? domText('p', '', `Até ${formatElapsedSeconds(end)}`) : null,
+        domText('p', 'editorial-chapter-description', chapterDescription),
       ]));
     });
     if (chapters.length) panel.appendChild(chapterList);
@@ -2928,6 +3002,7 @@ function renderCuts() {
       } else {
         transcriptionActions.push(domButton('Gerar editorial', 'sparkles', 'lime', 'generate-editorial'));
       }
+      if ((transcription?.corrections?.aplicadas || []).length) transcriptionActions.push(domButton('Revisar correções', 'list-checks', 'secondary', 'review-transcription', { 'data-video-id': selectedCutSource.id }));
       transcriptionActions.push(editorialStatus);
       if (!cutJob || cutJob.status === 'needs_review' || cutJob.status === 'needs_review_fallback') transcriptionActions.unshift(domButton('Gerar cortes deste vídeo', 'scissors', 'lime', 'preview'));
       sourceStatus.appendChild(createElement('div', { className: 'cut-source-actions' }, transcriptionActions));
@@ -3477,6 +3552,8 @@ document.addEventListener('click', (event) => {
   if (clearTranscriptionButton) clearTranscriptionCache(clearTranscriptionButton.dataset.videoId);
   const exportTranscriptionButton = event.target.closest('[data-action="export-transcription"]');
   if (exportTranscriptionButton) exportTranscription(exportTranscriptionButton.dataset.videoId);
+  const reviewTranscriptionButton = event.target.closest('[data-action="review-transcription"]');
+  if (reviewTranscriptionButton) openTranscriptionReview(reviewTranscriptionButton.dataset.videoId);
   const readEditorialButton = event.target.closest('[data-action="read-editorial-dossier"]');
   if (readEditorialButton) openEditorialDossier(readEditorialButton.dataset.videoId);
   const deleteEditorialButton = event.target.closest('[data-action="delete-editorial-dossier"]');

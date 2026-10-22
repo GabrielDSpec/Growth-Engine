@@ -58,6 +58,12 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [x] Editorial sem mídia original: vídeos com transcrição segmentada persistida podem gerar dossiê mesmo quando `arquivo_origem` está ausente, sem inventar caminho físico e com cache validado pela transcrição.
 - [x] Steps editoriais proporcionais: janelas de até 180s calculam metas dinâmicas por duração, acumulam candidatos válidos de todos os steps e não limitam a colheita global a três cortes.
 - [x] Preservação de cortes entre steps: timestamps absolutos são mantidos, timestamps relativos recebem o deslocamento da janela e ambos fazem snap aos limites Whisper; cada janela pede 1 a 2 cortes e a prova mockada de 600s confirma candidatos nos steps 2, 3 e 4 sem chamar o Ollama real.
+- [x] Validação acústica das correções: cada sugestão contextual é conferida por uma janela Whisper do áudio real; divergências ficam pendentes de revisão e preservam texto reconhecido e similaridade.
+- [x] Descrições ausentes em dossiês antigos: o schema editorial agora exige `descricao` nos capítulos; dossiês gerados pelo contrato anterior devem ser excluídos e regenerados.
+- [x] Limite máximo de cortes: a validação final rejeita intervalos acima da duração máxima configurada, evitando que candidatos de mais de 60 segundos sejam persistidos ou renderizados.
+- [x] Revisão transcricional com evidência: o modal permite ouvir o intervalo real do áudio e editar manualmente a sugestão antes de salvar a decisão.
+- [x] Timestamp visível na revisão: cada cartão de correção exibe os horários de início e fim logo abaixo do player do segmento.
+- [x] Reinício do servidor no EXE: `GROWTH_ENGINE_ROOT` mantém painel, servidor e SQLite apontando para a raiz externa do projeto, evitando `unable to open database` na pasta temporária do PyInstaller.
 - [x] Retomada editorial por janela: o dossiê parcial marca `running`, persiste steps concluídos e, após reinício, o mapper reprocessa somente steps ausentes ou falhos; o job operacional recebe o cursor a cada janela.
 - [x] Contratos de curadoria sincronizados: testes não aceitam mais candidatos locais quando a resposta editorial está vazia ou o Ollama está desativado; o retry corretivo de schema permanece coberto.
 - [x] Retomada por janela no faster-whisper: janelas concluídas são salvas em sidecar parcial com escrita atômica e puladas após reinício; overlap é deduplicado antes do cache final. O offset retomável do DirectCompute AMD permanece pendente.
@@ -164,6 +170,11 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [x] Menu de legendas minimalista: preview vem antes dos controles, ajustes essenciais ficam visíveis e fonte/contorno/cores ficam em “Ajustes avançados”.
 - [x] Campos numéricos de legendas: tamanho em pixels e opacidade do fundo em porcentagem podem ser digitados e permanecem sincronizados com os sliders.
 - [x] Atualização do asset da interface de legendas: versão do `app.js` incrementada para evitar que o navegador mantenha o menu antigo em cache.
+- [x] Editorial por capítulo: cada capítulo do dossiê agora recebe e exibe uma descrição factual gerada pela IA.
+- [x] Pipeline pós-transcrição: ao terminar a transcrição, o sistema enfileira o editorial, revisa possíveis erros com contexto dos capítulos e gera o dossiê final usando a versão corrigida.
+- [x] Versionamento da transcrição: original, corrigida, correções aplicadas e status ficam preservados no histórico sem sobrescrever a fonte.
+- [x] Revisão manual da transcrição: a interface compara original e sugestão corrigida e permite manter ou reverter cada alteração individualmente.
+- [x] Regeneração automática: ao salvar decisões da revisão, o dossiê antigo é invalidado e um novo job editorial é iniciado e acompanhado pela interface.
 - [x] Substituição de palavras por ciclo: a Central permite trocar uma palavra ou expressão simultaneamente em títulos e descrições de todos os cortes de um `job_id`, com escopo isolado e confirmação.
 - [x] Áudio inesperado ao abrir corte corrigido: o preview ampliado não inicia mais automaticamente e vídeos anteriores são pausados antes de abrir outro corte.
 - [x] Preview auxiliar de legendas silenciado: o vídeo usado como fundo visual inicia somente com `muted`, `defaultMuted` e volume zero, sem áudio ao abrir a Central.

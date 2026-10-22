@@ -99,6 +99,16 @@ Separar a análise editorial da renderização dos cortes, preservando em um dos
 - [x] Interface de legendas: o diálogo foi reorganizado em preview, controles rápidos e acordeão de ajustes avançados para reduzir ruído visual.
 - [x] Edição precisa de legendas: tamanho e opacidade possuem campos numéricos editáveis, sincronizados com seus controles deslizantes.
 - [x] Cache da interface: o identificador do `app.js` foi atualizado para garantir que o diálogo novo seja carregado após a atualização.
+- [x] Descrição de capítulos: o schema editorial, o dossiê persistido e o leitor da interface exibem uma descrição factual por capítulo.
+- [x] Pipeline editorial pós-transcrição: a conclusão da transcrição enfileira automaticamente o editorial; após a leitura estrutural, a IA propõe correções conservadoras e o editorial final é regenerado quando há alterações.
+- [x] Histórico de revisão: transcrição original, corrigida e motivos/confianças das alterações ficam persistidos e a API usa a corrigida nos cortes posteriores.
+- [x] Revisão humana: o painel exibe cada correção em comparação com o original e salva decisões individuais antes de regenerar o editorial.
+- [x] Validação acústica das correções: cada sugestão contextual é conferida por uma janela Whisper do áudio real; divergências ficam pendentes de revisão e preservam texto reconhecido e similaridade.
+- [x] Compatibilidade de descrições: o schema editorial exige `descricao` nos capítulos; dossiês antigos sem esse campo devem ser invalidados e regenerados.
+- [x] Limite máximo de cortes: a validação final rejeita intervalos acima da duração máxima configurada, evitando que candidatos de mais de 60 segundos sejam persistidos ou renderizados.
+- [x] Revisão transcricional com evidência: o modal permite ouvir o intervalo real do áudio e editar manualmente a sugestão antes de salvar a decisão.
+- [x] Timestamp visível na revisão: cada cartão de correção exibe os horários de início e fim logo abaixo do player do segmento.
+- [x] Regeneração pós-revisão: o endpoint invalida o dossiê anterior e enfileira automaticamente o editorial final, com polling visual do job.
 - [x] Substituição de palavras por ciclo: o cabeçalho do ciclo permite trocar uma palavra ou expressão em todos os títulos e descrições do job, somente em palavras completas e sem afetar outros ciclos.
 - [x] Tamanho contínuo e centralização: slider de 32 a 96px atualiza a prévia em tempo real, e o comando de centralização reposiciona a legenda no centro do frame.
 - [x] Escala fiel da prévia: tamanho da fonte, stroke e sombras usam a proporção da composição ASS 1080x1920, mantendo o preview em 9:16 e recalculando ao redimensionar.

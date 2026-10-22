@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 from core.database import get_connection, init_db, salvar_perfil_google
-from core.cutter import GenerationCancelled, OLLAMA_CUTS_ENABLED, OLLAMA_MAX_SECONDS, _calcular_timeout_ollama, gerar_cortes_com_retry, garimpar_vacas_roxas, calcular_score_observavel, _gerar_resposta_ollama, _gerar_resposta_ollama_http, _gerar_indice_editorial_estrutural
+from core.cutter import GenerationCancelled, OLLAMA_CUTS_ENABLED, OLLAMA_MAX_SECONDS, _calcular_timeout_ollama, corrigir_transcricao_com_contexto, gerar_cortes_com_retry, garimpar_vacas_roxas, calcular_score_observavel, _gerar_resposta_ollama, _gerar_resposta_ollama_http, _gerar_indice_editorial_estrutural
 from core.cutter import normalizar_titulo_corte, refinar_titulo_corte, _descricao_editorial_local, _titulo_editorial_local, _titulo_generico
 from core.captions import CAPTION_FONTS, CAPTION_POSITIONS, CAPTION_STROKE_COLORS, CAPTION_STROKE_WIDTHS, CAPTION_STYLES
 from core.caption_styles import get_caption_style, import_caption_style, list_caption_styles, validate_style_config
@@ -292,7 +292,7 @@ def _delete_editorial_dossier(video_id, perfil_id):
         ).fetchone()
     finally:
         conn.close()
-    if not row:
+    if not rows:
         raise LookupError("Vídeo não encontrado neste perfil.")
     path = dossier_path(video_id, perfil_id)
     if not path.is_file():
@@ -1239,7 +1239,7 @@ def _fetch_transcription(video_id, perfil_id=1):
     conn = get_connection()
     try:
         row = conn.execute(
-            "SELECT video_id, titulo, transcricao, transcricao_segmentos, duracao_segundos FROM videos_historico WHERE video_id = ? AND perfil_id = ?",
+            "SELECT video_id, titulo, transcricao, transcricao_segmentos, transcricao_original, transcricao_original_segmentos, transcricao_corrigida, transcricao_corrigida_segmentos, transcricao_correcoes, transcricao_status, duracao_segundos FROM videos_historico WHERE video_id = ? AND perfil_id = ?",
             (video_id, perfil_id),
         ).fetchone()
         if not row:
@@ -1248,18 +1248,71 @@ def _fetch_transcription(video_id, perfil_id=1):
             segments = json.loads(row["transcricao_segmentos"] or "[]")
         except json.JSONDecodeError:
             segments = []
+        try:
+            corrected_segments = json.loads(row["transcricao_corrigida_segmentos"] or "[]")
+        except json.JSONDecodeError:
+            corrected_segments = []
+        try:
+            original_segments = json.loads(row["transcricao_original_segmentos"] or "[]")
+        except json.JSONDecodeError:
+            original_segments = []
+        try:
+            corrections = json.loads(row["transcricao_correcoes"] or "{}")
+        except json.JSONDecodeError:
+            corrections = {}
+        if corrected_segments:
+            segments = corrected_segments
         duration = float(row["duracao_segundos"] or 0)
         if duration <= 0:
             duration = max((float(segment.get("fim", 0)) for segment in segments), default=0)
         return {
             "id": row["video_id"],
             "title": row["titulo"] or "Sem título",
-            "text": row["transcricao"] or "",
+            "text": row["transcricao_corrigida"] or row["transcricao"] or "",
             "segments": segments,
+            "original_text": row["transcricao_original"] or row["transcricao"] or "",
+            "original_segments": original_segments or ([] if corrected_segments else segments),
+            "corrections": corrections,
+            "transcription_status": row["transcricao_status"] or "original",
             "duration_seconds": duration,
         }
     finally:
         conn.close()
+
+
+def _review_transcription(video_id, perfil_id, decisions, edits=None):
+    transcription = _fetch_transcription(video_id, perfil_id)
+    if transcription is None:
+        raise ValueError("Vídeo não encontrado")
+    corrections = transcription.get("corrections") or {}
+    applied = corrections.get("aplicadas") if isinstance(corrections, dict) else []
+    original_segments = transcription.get("original_segments") or transcription.get("segments") or []
+    corrected_segments = [dict(segment) for segment in original_segments]
+    by_index = {int(segment.get("indice")): segment for segment in corrected_segments if segment.get("indice") is not None}
+    reviewed = []
+    for correction in applied if isinstance(applied, list) else []:
+        try:
+            index = int(correction.get("indice"))
+        except (TypeError, ValueError):
+            continue
+        accepted = decisions.get(str(index), correction.get("aceita", True)) if isinstance(decisions, dict) else correction.get("aceita", True)
+        target = by_index.get(index)
+        if target is None:
+            continue
+        edited_text = edits.get(str(index), "").strip() if isinstance(edits, dict) else ""
+        target["texto"] = edited_text if accepted and edited_text else (correction.get("corrigido") if accepted else correction.get("original", target.get("texto", "")))
+        reviewed.append({**correction, "aceita": bool(accepted)})
+    text = " ".join(segment.get("texto", "") for segment in corrected_segments)
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE videos_historico SET transcricao_corrigida=?, transcricao_corrigida_segmentos=?, transcricao_correcoes=?, transcricao_status=?, atualizado_em=CURRENT_TIMESTAMP WHERE video_id=? AND perfil_id=?",
+            (text, json.dumps(corrected_segments, ensure_ascii=False), json.dumps({"aplicadas": reviewed}, ensure_ascii=False), "revisada_manual", video_id, perfil_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return _fetch_transcription(video_id, perfil_id)
 
 
 def _format_srt_timestamp(seconds):
@@ -1495,20 +1548,56 @@ def _run_transcription_job(job_id, video_id, perfil_id):
         transcription = _fetch_transcription(video_id, perfil_id)
         if not text:
             raise RuntimeError(f"A transcrição do vídeo {video_id} terminou sem produzir texto.")
+        editorial_job_id = _queue_editorial_after_transcription(video_id, perfil_id)
         _update_runtime_job(
             TRANSCRIPTION_JOBS,
             job_id,
             perfil_id,
             status="completed",
             progress=100,
-            message="Transcrição concluída",
+            message="Transcrição concluída; editorial enfileirado" if editorial_job_id else "Transcrição concluída; editorial pendente",
             segments=transcription["segments"] if transcription else [],
+            editorial_job_id=editorial_job_id,
         )
     except JobCancelled as error:
         _cleanup_cancelled_job(job_id, perfil_id, video_id)
         _update_runtime_job(TRANSCRIPTION_JOBS, job_id, perfil_id, status="cancelled", message=str(error))
     except Exception as error:
         _update_runtime_job(TRANSCRIPTION_JOBS, job_id, perfil_id, status="failed", progress=0, message=str(error), error=str(error))
+
+
+def _queue_editorial_after_transcription(video_id, perfil_id):
+    editorial_job_id = uuid.uuid4().hex
+    create_job(editorial_job_id, "editorial", video_id, perfil_id=perfil_id)
+    _update_runtime_job(
+        CUT_JOBS,
+        editorial_job_id,
+        perfil_id,
+        status="queued",
+        progress=0,
+        message="Aguardando transcrição concluída",
+        video_id=video_id,
+        stage="editorial",
+        step_name="editorial",
+        step_index=0,
+    )
+    if not TASK_RUNNER.submit(
+        "editorial",
+        _run_editorial_job,
+        editorial_job_id,
+        video_id,
+        perfil_id,
+        key=f"editorial:{perfil_id}:{video_id}",
+    ):
+        update_job(editorial_job_id, status="failed", message="Não foi possível enfileirar o editorial", perfil_id=perfil_id)
+        _update_runtime_job(CUT_JOBS, editorial_job_id, perfil_id, status="failed", progress=0, message="Não foi possível enfileirar o editorial", error="Fila indisponível")
+        return None
+    criar_notificacao(
+        "Editorial enfileirado",
+        f"A transcrição do vídeo {video_id} terminou; a geração editorial foi iniciada.",
+        perfil_id=perfil_id,
+    )
+    return editorial_job_id
 
 
 def _run_editorial_job(job_id, video_id, perfil_id, duracao_minima=30, duracao_maxima=60):
@@ -1535,6 +1624,51 @@ def _run_editorial_job(job_id, video_id, perfil_id, duracao_minima=30, duracao_m
             titulo_original=source_row["titulo"] if source_row else "",
             cancel_callback=lambda: _cancel_event(job_id).is_set(),
         )
+        original_segments = [dict(segment) for segment in segments]
+        corrected_segments = original_segments
+        corrections = []
+        correction_error = None
+        _update_runtime_job(CUT_JOBS, job_id, perfil_id, progress=55, message="Revisando transcrição com contexto editorial", stage="transcription_review", step_name="transcription_review", step_index=2, step_total=4)
+        try:
+            corrected_segments, corrections = corrigir_transcricao_com_contexto(
+                original_segments,
+                list(editorial_index),
+                titulo_original=source_row["titulo"] if source_row else "",
+                caminho_audio=source_path,
+                cancel_callback=lambda: _cancel_event(job_id).is_set(),
+            )
+        except Exception as error:
+            correction_error = str(error)
+            corrected_segments = original_segments
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE videos_historico SET transcricao_original=?, transcricao_original_segmentos=?, transcricao_corrigida=?, transcricao_corrigida_segmentos=?, transcricao_correcoes=?, transcricao_status=?, atualizado_em=CURRENT_TIMESTAMP WHERE video_id=? AND perfil_id=?",
+                (
+                    " ".join(segment.get("texto", "") for segment in original_segments),
+                    json.dumps(original_segments, ensure_ascii=False),
+                    " ".join(segment.get("texto", "") for segment in corrected_segments),
+                    json.dumps(corrected_segments, ensure_ascii=False),
+                    json.dumps({"aplicadas": corrections, "erro": correction_error}, ensure_ascii=False),
+                    "corrigida" if corrections else "revisada",
+                    video_id,
+                    perfil_id,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        if corrections:
+            _update_runtime_job(CUT_JOBS, job_id, perfil_id, progress=68, message=f"{len(corrections)} correção(ões) aplicada(s); regenerando editorial final", stage="editorial_final", step_name="editorial_final", step_index=3, step_total=4)
+            corrected_text = "\n".join(f"[{segment['indice']}] {segment['inicio']:.3f}-{segment['fim']:.3f}: {segment['texto']}" for segment in corrected_segments)
+            editorial_index = _gerar_indice_editorial_estrutural(
+                corrected_text,
+                duration,
+                corrected_segments,
+                titulo_original=source_row["titulo"] if source_row else "",
+                cancel_callback=lambda: _cancel_event(job_id).is_set(),
+            )
+            segments = corrected_segments
         analysis = {
             "status": "completed",
             "capitulos": list(editorial_index),
@@ -1549,8 +1683,8 @@ def _run_editorial_job(job_id, video_id, perfil_id, duracao_minima=30, duracao_m
             "model": os.getenv("GROWTH_ENGINE_CUT_MODEL", "qwen2.5:14b"),
             "prompt_version": "editorial-steps-v2",
         })
-        result = {"editorial": dossier, "analysis": analysis}
-        _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="completed", progress=100, message="Editorial gerado; nenhum corte foi criado", video_id=video_id, editorial=dossier, stage="editorial", step_name="editorial", step_index=2, step_total=2)
+        result = {"editorial": dossier, "analysis": analysis, "transcricao_correcoes": corrections, "transcricao_correcao_erro": correction_error}
+        _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="completed", progress=100, message="Editorial final gerado; nenhum corte foi criado", video_id=video_id, editorial=dossier, transcription_corrections=corrections, transcription_correction_error=correction_error, stage="completed", step_name="completed", step_index=4, step_total=4)
         update_job(job_id, status="completed", progress=100, message="Editorial gerado; nenhum corte foi criado", result=json.dumps(result, ensure_ascii=False), perfil_id=perfil_id)
     except (JobCancelled, GenerationCancelled) as error:
         _update_runtime_job(CUT_JOBS, job_id, perfil_id, status="cancelled", message=str(error))
@@ -2686,6 +2820,45 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
             with open(thumbnail_path, "rb") as thumbnail:
                 self.wfile.write(thumbnail.read())
             return
+        if parsed.path == "/api/cuts/source-file":
+            video_id = parse_qs(parsed.query).get("video_id", [""])[0]
+            perfil_query = parse_qs(parsed.query).get("perfil_id", [""])[0]
+            try:
+                media_profile_id = int(perfil_query) if perfil_query else self.request_profile_id
+            except (TypeError, ValueError):
+                self.send_error(400, "Perfil inválido")
+                return
+            with get_connection() as conn:
+                row = conn.execute("SELECT arquivo_origem FROM videos_historico WHERE video_id=? AND perfil_id=?", (video_id, media_profile_id)).fetchone()
+            source_path = row["arquivo_origem"] if row else ""
+            if not source_path or not os.path.isfile(source_path):
+                self.send_error(404, "Mídia original não disponível")
+                return
+            file_size = os.path.getsize(source_path)
+            range_header = self.headers.get("Range", "")
+            start, end = 0, file_size - 1
+            if range_header.startswith("bytes="):
+                first, _, last = range_header[6:].split(",", 1)[0].strip().partition("-")
+                start = int(first) if first else max(file_size - int(last), 0)
+                end = int(last) if first and last else end
+                if start >= file_size or start > end:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{file_size}")
+                    self.end_headers()
+                    return
+                end = min(end, file_size - 1)
+            content_length = end - start + 1
+            self.send_response(206 if range_header.startswith("bytes=") else 200)
+            self.send_header("Content-Type", mimetypes.guess_type(source_path)[0] or "application/octet-stream")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(content_length))
+            if range_header.startswith("bytes="):
+                self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+            self.end_headers()
+            with open(source_path, "rb") as media:
+                media.seek(start)
+                self.wfile.write(media.read(content_length))
+            return
         if parsed.path == "/api/caption-styles":
             self._send_json({"styles": list_caption_styles(self.request_profile_id)})
             return
@@ -3335,6 +3508,24 @@ class GrowthEngineHandler(SimpleHTTPRequestHandler):
                 self._send_json({"job_id": job_id, "status": "queued"}, status=202)
             except (ValueError, TypeError, json.JSONDecodeError) as error:
                 self._send_json({"error": f"Solicitação inválida: {error}"}, status=400)
+            return
+        if parsed.path == "/api/transcription/review":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(length) or b"{}")
+                video_id = str(body.get("video_id") or "").strip()
+                decisions = body.get("decisions") or {}
+                edits = body.get("edits") or {}
+                if not video_id or not isinstance(decisions, dict) or not isinstance(edits, dict):
+                    self._send_json({"error": "Vídeo e decisões são obrigatórios."}, status=400)
+                    return
+                transcription = _review_transcription(video_id, self.request_profile_id, decisions, edits=edits)
+                editorial_job_id = _queue_editorial_after_transcription(video_id, self.request_profile_id)
+                if editorial_job_id:
+                    _delete_editorial_dossier(video_id, self.request_profile_id)
+                self._send_json({"transcription": transcription, "editorial_job_id": editorial_job_id, "status": "queued" if editorial_job_id else "pending"}, status=202)
+            except (ValueError, TypeError, json.JSONDecodeError) as error:
+                self._send_json({"error": str(error)}, status=400)
             return
         if parsed.path == "/api/transcription/clear-cache":
             try:

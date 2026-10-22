@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import math
 import time
@@ -10,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import yt_dlp
 from faster_whisper import WhisperModel
+from difflib import SequenceMatcher
 from core.database import DB_PATH, get_connection, init_db
 from core.tenant import normalize_profile_id
 from core.config import DIRETORIO_PROJETO
@@ -190,6 +192,35 @@ def _extrair_palavras(segment):
         if not texto or inicio is None or fim is None or float(fim) <= float(inicio):
             continue
         resultado.append({"inicio": round(float(inicio), 3), "fim": round(float(fim), 3), "texto": texto})
+    return resultado
+
+
+def validar_correcoes_no_audio(caminho_audio, segmentos, correcoes, cancel_callback=None):
+    """Confere correções propostas reprocessando somente suas janelas de áudio."""
+    if not caminho_audio or not os.path.isfile(caminho_audio) or _whisper_backend() != "faster_whisper":
+        return [{**correcao, "audio_verificacao": "indisponivel"} for correcao in correcoes]
+    model = get_whisper_model()
+    por_indice = {int(segmento.get("indice")): segmento for segmento in segmentos if segmento.get("indice") is not None}
+    resultado = []
+    for correcao in correcoes:
+        if cancel_callback and cancel_callback():
+            raise TranscriptionCancelled("Processamento cancelado pelo usuário.")
+        try:
+            segmento = por_indice[int(correcao["indice"])]
+            inicio = max(0.0, float(segmento["inicio"]) - 0.75)
+            fim = float(segmento["fim"]) + 0.75
+            generated, _ = model.transcribe(caminho_audio, language="pt", beam_size=5, vad_filter=False, condition_on_previous_text=False, clip_timestamps=[inicio, fim])
+            audio_text = " ".join(str(item.text or "").strip() for item in generated).strip()
+            normalizar = lambda value: re.sub(r"[^a-z0-9 ]+", "", str(value).lower()).strip()
+            corrigido = normalizar(correcao.get("corrigido", ""))
+            reconhecido = normalizar(audio_text)
+            similaridade = SequenceMatcher(None, corrigido, reconhecido).ratio() if corrigido and reconhecido else 0.0
+            palavras_corrigidas = set(corrigido.split())
+            palavras_reconhecidas = set(reconhecido.split())
+            sobreposicao = len(palavras_corrigidas & palavras_reconhecidas) / max(len(palavras_corrigidas), 1)
+            resultado.append({**correcao, "audio_verificacao": "confirmada" if similaridade >= 0.45 or sobreposicao >= 0.5 else "divergente", "audio_texto": audio_text, "audio_similaridade": round(similaridade, 3)})
+        except Exception as error:
+            resultado.append({**correcao, "audio_verificacao": "erro", "audio_erro": str(error)})
     return resultado
 
 

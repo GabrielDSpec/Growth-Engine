@@ -3,11 +3,47 @@ from unittest.mock import patch
 
 import requests
 
-from core.cutter import EditorialCandidates, GenerationCancelled, _calcular_timeout_ollama, _candidato_somente_ruido_audio, _candidatos_fallback, _candidatos_para_revisao, _cortes_repetidos, _deduplicar_cortes, _extrair_candidatos, _gerar_indice_editorial, _gerar_resposta_ollama, _gerar_resposta_ollama_http, _gerar_dossie_editorial_unico, _normalizar_candidato_bloco, _segmentar_editorial, _selecionar_candidatos_locais_com_insistencia, _titulo_editorial_local, gerar_cortes_com_retry
+from core.cutter import EditorialCandidates, GenerationCancelled, _calcular_timeout_ollama, _candidato_somente_ruido_audio, _candidatos_fallback, _candidatos_para_revisao, _cortes_repetidos, _deduplicar_cortes, _extrair_candidatos, _gerar_indice_editorial, _gerar_resposta_ollama, _gerar_resposta_ollama_http, _gerar_dossie_editorial_unico, _normalizar_candidato_bloco, _segmentar_editorial, _selecionar_candidatos_locais_com_insistencia, _titulo_editorial_local, corrigir_transcricao_com_contexto, gerar_cortes_com_retry
 from core.media_tools import nome_seguro_arquivo
 
 
 class OllamaWatchdogTests(unittest.TestCase):
+    def test_correcao_contextual_aplica_apenas_alta_confianca(self):
+        segmentos = [
+            {"indice": 0, "inicio": 0, "fim": 5, "texto": "Falamos de quinzena."},
+            {"indice": 1, "inicio": 5, "fim": 10, "texto": "O restante permanece igual."},
+        ]
+        resposta = {"status_code": 200, "response": '{"correcoes":[{"indice":0,"texto_corrigido":"Falamos de quinhentos.","motivo":"Termo coerente com o capítulo.","confianca":0.95},{"indice":1,"texto_corrigido":"Texto alterado.","motivo":"Baixa evidência.","confianca":0.50}]}' }
+        with patch("core.cutter._gerar_resposta_ollama", return_value=resposta):
+            corrigidos, aplicadas = corrigir_transcricao_com_contexto(segmentos, [{"titulo": "Valores", "descricao": "Explicação de valores", "inicio": 0, "fim": 10}])
+        self.assertEqual(corrigidos[0]["texto"], "Falamos de quinhentos.")
+        self.assertEqual(corrigidos[1]["texto"], "O restante permanece igual.")
+        self.assertEqual(aplicadas[0]["original"], "Falamos de quinzena.")
+
+    def test_correcao_divergente_do_audio_fica_pendente(self):
+        segmentos = [{"indice": 0, "inicio": 0, "fim": 5, "texto": "Falamos de quinzena."}]
+        resposta = {"status_code": 200, "response": '{"correcoes":[{"indice":0,"texto_corrigido":"Falamos de quinhentos.","motivo":"Termo coerente com o capítulo.","confianca":0.95}]}' }
+        verificacao = [{"indice": 0, "texto_corrigido": "Falamos de quinhentos.", "motivo": "Termo coerente com o capítulo.", "confianca": 0.95, "audio_verificacao": "divergente", "audio_texto": "Falamos de quinzena.", "audio_similaridade": 0.42}]
+        with patch("core.cutter._gerar_resposta_ollama", return_value=resposta), patch("core.cutter.validar_correcoes_no_audio", return_value=verificacao):
+            corrigidos, aplicadas = corrigir_transcricao_com_contexto(segmentos, [{"titulo": "Valores", "descricao": "Explicação de valores", "inicio": 0, "fim": 10}], caminho_audio="audio.mp4")
+        self.assertEqual(corrigidos[0]["texto"], "Falamos de quinzena.")
+        self.assertFalse(aplicadas[0]["aceita"])
+        self.assertEqual(aplicadas[0]["audio_verificacao"], "divergente")
+
+    def test_revisao_rejeita_candidato_acima_da_duracao_maxima(self):
+        segmentos = [
+            {"indice": indice, "inicio": indice * 10, "fim": (indice + 1) * 10, "texto": f"fala contínua {indice}"}
+            for indice in range(8)
+        ]
+        resultado = _candidatos_para_revisao(
+            [{"titulo": "Trecho longo", "inicio_segundos": 0, "fim_segundos": 70}],
+            segmentos,
+            80,
+            duracao_minima=30,
+            duracao_maxima=60,
+        )
+        self.assertEqual(resultado, [])
+
     def test_editorial_preserva_steps_com_musica_ou_gritos(self):
         segmentos = [
             {"indice": indice, "inicio": indice * 180 + 5, "fim": indice * 180 + 15, "texto": "[MÚSICA TOCANDO]" if indice % 2 == 0 else "[GRITOS DE GOL]"}
@@ -101,7 +137,7 @@ class OllamaWatchdogTests(unittest.TestCase):
     def test_indice_editorial_reintenta_schema_quando_modelo_retorna_mapa_de_transcricao(self):
         respostas = [
             {"status_code": 200, "response": '{"[%d] %d.000-%d.000: %s": ",", ": [{": "#", "172.000-176.000": "Fala do vídeo"}'},
-            {"status_code": 200, "response": '{"resumo_conteudo":"Resumo do vídeo inteiro.","capitulos":[{"titulo":"Introdução","inicio_segundos":0,"fim_segundos":20},{"titulo":"Chegada","inicio_segundos":20,"fim_segundos":40},{"titulo":"Preparação","inicio_segundos":40,"fim_segundos":60},{"titulo":"Evento","inicio_segundos":60,"fim_segundos":80},{"titulo":"Público","inicio_segundos":80,"fim_segundos":100},{"titulo":"Encerramento","inicio_segundos":100,"fim_segundos":120}]}'},
+            {"status_code": 200, "response": '{"resumo_conteudo":"Resumo do vídeo inteiro.","capitulos":[{"titulo":"Introdução","descricao":"O vídeo apresenta o contexto.","inicio_segundos":0,"fim_segundos":20},{"titulo":"Chegada","descricao":"A chegada ao local é mostrada.","inicio_segundos":20,"fim_segundos":40},{"titulo":"Preparação","descricao":"A preparação do evento é explicada.","inicio_segundos":40,"fim_segundos":60},{"titulo":"Evento","descricao":"O evento principal acontece.","inicio_segundos":60,"fim_segundos":80},{"titulo":"Público","descricao":"O público participa da atividade.","inicio_segundos":80,"fim_segundos":100},{"titulo":"Encerramento","descricao":"O vídeo termina com o encerramento.","inicio_segundos":100,"fim_segundos":120}]}'},
         ]
         segmentos = [
             {"indice": 0, "inicio": 0, "fim": 60, "texto": "A introdução do vídeo."},
@@ -112,6 +148,7 @@ class OllamaWatchdogTests(unittest.TestCase):
         self.assertEqual(provider.call_count, 2)
         self.assertEqual(len(resultado), 6)
         self.assertEqual(resultado[0]["inicio"], 0)
+        self.assertEqual(resultado[0]["descricao"], "O vídeo apresenta o contexto.")
         self.assertEqual(resultado[1]["fim"], 40)
         self.assertEqual(resultado[-1]["fim"], 120)
 
@@ -252,14 +289,14 @@ class OllamaWatchdogTests(unittest.TestCase):
             {"titulo": "Colaboração com Mohamed", "inicio_segundos": 168.4, "fim_segundos": 176.4},
             {"titulo": "Colaboração com Mohamed para o Fusca", "inicio_segundos": 168.4, "fim_segundos": 174.4},
             {"titulo": "Agradecimento e Instagram", "inicio_segundos": 178.4, "fim_segundos": 188.4},
-            {"titulo": "Gritos de gol enlouquecem a galera", "inicio_segundos": 1400.4, "fim_segundos": 1472.4},
+            {"titulo": "Gritos de gol enlouquecem a galera", "inicio_segundos": 1400.4, "fim_segundos": 1460.4},
         ]
         validos = _candidatos_para_revisao(candidatos, segmentos, 1474.4, 30, 60)
-        self.assertEqual(len(validos), 4)
+        self.assertEqual(len(validos), 3)
         intervalos = sorted((corte["inicio"], corte["fim"]) for corte in validos)
         self.assertTrue(all(intervalos[indice + 1][0] - intervalos[indice][1] >= 30 for indice in range(len(intervalos) - 1)))
         self.assertTrue(all(corte["fim"] - corte["inicio"] >= 30 for corte in validos))
-        self.assertTrue(any("Gritos de gol" in corte["titulo"] for corte in validos))
+        self.assertTrue(all(corte["fim"] - corte["inicio"] <= 60 for corte in validos))
 
         with patch("core.cutter._gerar_dossie_editorial_unico", return_value=candidatos), patch("core.cutter.OLLAMA_CUTS_ENABLED", True):
             resultado = gerar_cortes_com_retry("transcricao", 1474.4, segmentos, minimo=9, duracao_minima=30, duracao_maxima=60)

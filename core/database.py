@@ -1,7 +1,8 @@
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "canal_inteligencia.db")
+PROJECT_ROOT = os.environ.get("GROWTH_ENGINE_ROOT") or os.path.dirname(os.path.abspath(os.path.dirname(__file__)))
+DB_PATH = os.path.join(PROJECT_ROOT, "core", "canal_inteligencia.db")
 
 
 def get_connection():
@@ -259,7 +260,7 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_analises_status ON analises_conteudo (status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_classificacoes_tema ON classificacoes_conteudo (tema_abstrato)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_classificacoes_pilar ON classificacoes_conteudo (pilar)")
-        for coluna, tipo in (("descricao", "TEXT"), ("hora_publicacao", "TEXT"), ("transcricao", "TEXT"), ("transcricao_segmentos", "TEXT"), ("duracao_segundos", "INTEGER"), ("arquivo_origem", "TEXT")):
+        for coluna, tipo in (("descricao", "TEXT"), ("hora_publicacao", "TEXT"), ("transcricao", "TEXT"), ("transcricao_segmentos", "TEXT"), ("transcricao_original", "TEXT"), ("transcricao_original_segmentos", "TEXT"), ("transcricao_corrigida", "TEXT"), ("transcricao_corrigida_segmentos", "TEXT"), ("transcricao_correcoes", "TEXT"), ("transcricao_status", "TEXT"), ("duracao_segundos", "INTEGER"), ("arquivo_origem", "TEXT")):
             try:
                 cursor.execute(f"ALTER TABLE videos_historico ADD COLUMN {coluna} {tipo}")
             except sqlite3.OperationalError:
