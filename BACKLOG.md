@@ -2,6 +2,20 @@
 
 Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A fonte de contexto é `documentacao_ia.md`, `historico_implementacoes.md`, `docs/arquitetura_modular.md` e o estado atual do código.
 
+## Índice operacional
+
+- **Próxima execução:** [Quadro Kanban (Sprint Atual)](#quadro-kanban-sprint-atual), nas colunas `To Do` e `In Progress`.
+- **Planejamento de médio/longo prazo:** [Épicos](#épicos) e [Dívida Técnica & Bugs](#dívida-técnica--bugs).
+- **Critério de aceite:** [Definição de pronto do sprint](#definição-de-pronto-do-sprint).
+- **Histórico:** [Histórico de entregas concluídas](#histórico-de-entregas-concluídas). Itens concluídos permanecem ali como registro e não devem ser reabertos no Kanban sem uma nova tarefa explícita.
+
+### Regras de manutenção
+
+- Toda nova demanda entra primeiro em `To Do`, com critério de aceite verificável.
+- Ao iniciar, mover a tarefa para `In Progress`; ao validar, mover para `Done` e registrar a evidência.
+- Não duplicar uma tarefa entre o histórico, `Épicos`, `Dívida Técnica & Bugs` e o Kanban: use referência textual quando o mesmo tema aparecer em mais de uma visão.
+- Correções concluídas entram no histórico com o teste ou comando executado, preservando o Kanban como visão operacional curta.
+
 ## Contexto do produto
 
 - Objetivo: transformar vídeos do YouTube em evidência editorial, oportunidades de pauta, cortes para Shorts e publicações agendadas.
@@ -10,13 +24,17 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - Regra de produto: Oportunidades usa apenas a Autópsia do canal; Radar é descoberta externa e não alimenta pautas automaticamente.
 - Critério de prioridade: primeiro desbloquear inteligência editorial confiável, depois automatizar produção e publicação; segurança, persistência e observabilidade acompanham cada entrega.
 
-## Entregas recentes
+## Histórico de entregas concluídas
+
+Registro cumulativo das entregas já realizadas. Para trabalho executável, use o Kanban abaixo.
 
 - [x] Especificação corporativa: consolidada a proposta de valor, capacidades, arquitetura, integrações, maturidade, riscos, critérios de aceite e roadmap do Growth Engine para apresentação executiva.
 - [x] Stack tecnológica documentada: Python, SPA HTML/CSS/JavaScript, SQLite/WAL, Ollama/Qwen, Whisper/DirectCompute, FFmpeg, yt-dlp, Playwright, RSS e painel Windows foram relacionados às suas responsabilidades e dependências de implantação.
 - [x] README de portfólio: o repositório privado apresenta objetivo, fluxo, arquitetura, stack, maturidade, segurança, execução local e links para a documentação corporativa.
 - [x] Especificação corporativa em inglês: tradução técnica completa adicionada ao repositório e vinculada ao README para apresentação internacional.
 - [x] README em inglês: versão equivalente da vitrine técnica adicionada com links cruzados para a documentação corporativa e o README em português.
+- [x] Status público dos READMEs: capacidades concluídas de publicação idempotente, enquadramento facial e legendas estilizadas foram movidas para o núcleo; a seção de consolidação ficou restrita às pendências corporativas, operacionais e arquiteturais.
+- [x] Validação pública com mídia real: publicação recorrente de Shorts no canal confirmou a operação real de renderização, revisão, upload e agendamento; o README mantém apenas riscos residuais de concorrência, recuperação, backup e health checks.
 - [x] Notificações: limpar lidas remove os itens em tempo real do painel, atualiza o contador e mantém a exclusão persistida.
 - [x] Notificações: botão `Ler todas` marca todas as notificações não lidas do perfil ativo em uma única operação e atualiza o contador do painel.
 - [x] Biblioteca: análise manual individual com fila, progresso, ETA e notificações de conclusão ou falha.
@@ -33,6 +51,7 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [x] Vídeo relacionado no perfil correto: o vídeo `PQ85Kc7Y6xk` foi confirmado como pertencente ao perfil 1 (Aquele Cara de Bigode); a associação indevida ao perfil Ipiranga foi desfeita.
 - [x] Ordem dos relacionados por recência: vídeos sem data do YouTube usam atualização persistida como fallback; `PQ85Kc7Y6xk` recebeu a data oficial de 2026-10-16 e aparece primeiro.
 - [x] Metadados editoriais: títulos sem evidência ou genéricos como "A gente" são rejeitados antes da publicação, recebem fallback baseado no conteúdo do corte e o enriquecimento orienta Open Loop/conflito ancorado no tema do vídeo pai.
+- [x] Blindagem Zero Trust de metadados: respostas do Ollama exigem `titulo` e `tags` tipados, limitam o título a 120 caracteres, sanitizam descrições/justificativas e rejeitam JSON deformado; uploads imediatos e agendados nascem `private` para revisão humana.
 - [x] Fallback editorial de títulos: fillers iniciais são removidos, o texto é limitado a até oito palavras com reticências quando necessário e recebe o prefixo "Momento:".
 - [x] Integridade de agendamento: rotas individuais e em lote recusam cortes cujo MP4 não existe ou está vazio no disco.
 - [x] Publicação sem vídeo relacionado: o menu oferece “Nenhum vídeo relacionado”, persiste `sem_relacao` sem `NULL` e diferencia falha de geração de falha de publicação; quando o YouTube aceita o upload antes de uma falha local, o ID externo aparece na notificação.
@@ -64,6 +83,10 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [x] Revisão transcricional com evidência: o modal permite ouvir o intervalo real do áudio e editar manualmente a sugestão antes de salvar a decisão.
 - [x] Timestamp visível na revisão: cada cartão de correção exibe os horários de início e fim logo abaixo do player do segmento.
 - [x] Diagnóstico de curadoria indisponível: falhas de conexão do Ollama em todos os steps não são mais exibidas como curadoria insuficiente; o job informa que a IA precisa estar disponível.
+- [x] Prévia de segmento compatível: vídeos AV1/Opus usam uma prévia H.264/AAC em cache por intervalo, evitando player preto em navegadores sem decodificação AV1.
+- [x] ETA editorial estável: jobs editoriais sem estimativa explícita não extrapolam linearmente o percentual parcial, evitando uma ETA crescente e enganosa durante chamadas longas da IA.
+- [x] Ações massivas de metadados: a barra de selecionados e cada ciclo permitem gerar títulos ou descrições somente para os cortes selecionados, com confirmação, progresso individual em cada card e resumo do resultado.
+- [x] Ordem de publicação em massa: postagem imediata e agendamento processam os cortes selecionados por `score_vaca_roxa` decrescente, mantendo a ordem original em caso de empate.
 - [x] Reinício do servidor no EXE: `GROWTH_ENGINE_ROOT` mantém painel, servidor e SQLite apontando para a raiz externa do projeto, evitando `unable to open database` na pasta temporária do PyInstaller.
 - [x] Retomada editorial por janela: o dossiê parcial marca `running`, persiste steps concluídos e, após reinício, o mapper reprocessa somente steps ausentes ou falhos; o job operacional recebe o cursor a cada janela.
 - [x] Contratos de curadoria sincronizados: testes não aceitam mais candidatos locais quando a resposta editorial está vazia ou o Ollama está desativado; o retry corretivo de schema permanece coberto.
@@ -99,7 +122,7 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [x] Recuperação de fala sobreposta: saídas Whisper/DirectCompute dominadas por marcadores como `[MÚSICA DE FUNDO]` ou `[GRITOS DE GOL]` acionam uma segunda passagem com `faster-whisper large-v3`, evitando que ambiente substitua entrevistas e falas editoriais.
 - [x] Entrevistas de lideranças preservadas: o prompt editorial v3 prioriza entrevistas com presidentes, vice-presidentes, representantes e convidados, mantendo a apresentação e a resposta substantiva como material de corte.
 - [x] Títulos ancorados no trecho: antes de persistir o corte, o título é validado contra a transcrição do intervalo selecionado; títulos sem evidência local são substituídos por uma manchete derivada do próprio conteúdo.
-- [x] Regeneração individual de metadados: o editor de cada corte oferece ações separadas para gerar novamente título ou descrição com a transcrição real do intervalo, preservando o outro campo e persistindo o resultado antes da publicação.
+- [x] Regeneração individual de metadados: o editor de cada corte oferece ações separadas para gerar novamente título ou descrição com a transcrição real do intervalo ou, quando ela não está persistida, com o dossiê editorial individual do corte; uma transcrição global sem segmentos não é reutilizada entre cortes.
 - [x] Correção de persistência editorial: candidatos retornados somente com `inicio_segundos`/`fim_segundos` agora entram em `melhores_momentos`, e o dossiê usa `resumo_conteudo` da IA em vez da transcrição bruta como resumo principal.
 - [x] Editorial por blocos: vídeos longos são divididos em janelas de 180 segundos com sobreposição de 15 segundos para separar introdução, desenvolvimento e fechamento; a leitura exibe `descricao_publicacao` dos momentos.
 - [x] Arquitetura editorial em duas fases: o dossiê é um índice global de capítulos e resumo consolidado; a geração de cortes consulta esse índice e só então cria título e descrição específicos para cada trecho.
@@ -149,8 +172,9 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [x] Diagnóstico visual do Studio: timeout na busca relacionada salva `youtube_studio_error.png` e `youtube_studio_error.html` na raiz e tenta `get_by_placeholder("Pesquise")` e `get_by_role("textbox")` antes de falhar.
 - [x] Deduplicação rígida de cortes: o filtro temporal de 40% vale contra o banco e candidatos atuais, e títulos exatos ou muito similares são descartados antes da lista final.
 - [x] Regeração após exclusão: cortes com status `excluido`, `falhou` ou `cancelado` não bloqueiam novas janelas; somente intervalos ativos participam da deduplicação entre ciclos.
-- [x] Smart crop para planos abertos: detector facial amostra cinco posições do trecho, aceita faces menores e prioriza a maior detecção; sem rosto, o fallback vertical usa o quarto superior da sobra do crop.
-- [ ] Enquadramento editorial por confiança facial: classificar cada trecho como uma face estável, múltiplas faces ou plano amplo; uma única face estável deve receber crop 9:16 acompanhando o rosto, enquanto múltiplas faces ou ausência de face usam composição horizontal com fundo desfocado.
+- [x] Smart crop para planos abertos: MediaPipe Face Landmarker amostra cinco posições do trecho, calcula o centro ponderado das faces e posiciona a face no terço superior do crop 9:16; sem rosto, o fallback vertical usa composição com fundo desfocado.
+- [x] Active Speaker Tracking: em múltiplas faces distantes, a malha facial acompanha cada rosto e calcula a variação do MAR; o crop 9:16 segue exclusivamente o rosto com maior movimentação labial, ignorando o ouvinte. O modelo pode ser apontado por `MEDIAPIPE_FACE_LANDMARKER_MODEL`.
+- [x] Diagnóstico do smart crop facial: ausência de rosto, plano amplo/rosto pequeno e erro do MediaPipe agora são registrados separadamente antes do fallback vertical, permitindo auditar por que um ciclo não recebeu enquadramento facial.
 - [x] Legendas automáticas por corte: cues relativos dos segmentos Whisper, timestamps por palavra com karaoke ASS e fallback para cues segmentados, galeria JSON por perfil com presets protegidos, fontes TTF/OTF/TTC isoladas por perfil via `fontsdir`, painel de opcionais recolhido por padrão com preview integrado, validação de allowlists, preview e render usando a mesma configuração, snapshot imutável por corte, job assíncrono, saída MP4 separada, acesso para download e persistência de status/erro; versionamento formal do renderer e invalidação por mudança de transcrição/estilo permanecem pendentes.
 - [x] Cards de cortes em processamento: enquanto legenda, renderização, postagem/agendamento ou regeneração de título/descrição está ativa, o card afetado substitui preview e ações por etapa, barra de progresso, percentual e ETA; jobs em lote marcam somente os cortes envolvidos e o polling atualiza apenas esses cards. Jobs restaurados preservam timestamps/checkpoint para recalcular ETA, e legendas filtram explicitamente os segmentos dentro do intervalo do corte.
 - [x] Preview pós-legenda: após a conclusão do job, o `<video>` do card usa a rota `captions=1`, alinhando a prévia ao arquivo legendado já usado pelo download.
@@ -359,7 +383,8 @@ Backlog funcional e técnico do Growth Engine, organizado para trabalho Ágil. A
 - [ ] **Fila de análise de conteúdo:** a Autópsia dos vídeos longos usa Whisper/Qwen, cache e progresso persistente; é necessário acompanhar a retomada, o total de pendências e o resultado final após reinício.
 - [ ] **Modularização do backend:** repositories de notificações, análises e perfil, providers RSS e `TaskRunner` já existem; faltam handlers HTTP por domínio e remoção progressiva da orquestração concentrada.
 - [ ] **Hardening operacional:** CSP, Origin, URLs YouTube, perfil Chrome externo e contratos básicos já foram adicionados; faltam XSS residual, limites de threads e validação de FFmpeg.
-- [x] **Montagem editorial de gancho:** a Qwen sinaliza `gancho_contexto_retorno`; os intervalos são persistidos e montados no FFmpeg na sequência gancho, contexto e retorno ao destaque.
+- [x] **Montagem editorial de gancho:** a Qwen sinaliza `gancho_contexto_retorno`; os intervalos são persistidos e montados no FFmpeg via `filter_complex`/`concat` na sequência gancho, contexto e retorno ao destaque, com zoom leve a partir do segundo trecho.
+- [x] **Transições guiadas pela IA:** montagens compostas aceitam `transicao_sugerida` (`seco`, `fade` ou `slide`); o renderer preserva concat e zoom no corte seco e usa `xfade`/`acrossfade` com sobreposição calculada nas opções fluidas, com fallback defensivo para `seco`.
 
 ### Done
 

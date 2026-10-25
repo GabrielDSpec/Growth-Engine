@@ -82,7 +82,7 @@ flowchart LR
 
 ### Core available
 
-Channel analysis, transcription, semantic profiling, Radar, editorial dossiers, cut curation, vertical rendering, human review, metadata, idempotent publishing and scheduling, and distribution preparation.
+Channel analysis, transcription, semantic profiling, Radar, editorial dossiers, cut curation, vertical rendering, human review, metadata, real-media operation, and idempotent publishing and scheduling.
 
 The renderer also provides MediaPipe intelligent facial framing, shot classification, and Active Speaker Tracking. Wide shots or very small faces use an intentional vertical fallback composition. Styled captions per cut can be configured, previewed, and rendered into the MP4.
 
@@ -91,7 +91,6 @@ The renderer also provides MediaPipe intelligent facial framing, shot classifica
 - complete structural tenant isolation;
 - corporate RBAC and auditing;
 - provider metrics and health checks;
-- real-media operational validation;
 - progressive backend and frontend modularization.
 
 ## Local execution
@@ -117,7 +116,7 @@ The project uses Git-ignored local files for credentials, databases, media, cach
 
 ## Quality and security
 
-Tests cover domain contracts, invalid AI responses, the Ollama watchdog, cut timestamps, rendering, OAuth, persistence, idempotent publishing, captions, XSS, and profile isolation. Production operation still requires controlled real-media validation, backups, migrations, and real concurrency.
+Tests cover domain contracts, invalid AI responses, the Ollama watchdog, cut timestamps, rendering, OAuth, persistence, idempotent publishing, captions, XSS, and profile isolation. Real-media operation and publishing to the channel have been exercised; production care still includes backups, migrations, health checks, and concurrency/recovery scenarios that are not fully covered yet.
 
 Credentials, tokens, databases, media, caches, and browser profiles must never be committed. The `.gitignore` contains the standard exclusions for this material.
 
