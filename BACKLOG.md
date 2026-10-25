@@ -35,6 +35,7 @@ Registro cumulativo das entregas já realizadas. Para trabalho executável, use 
 - [x] README em inglês: versão equivalente da vitrine técnica adicionada com links cruzados para a documentação corporativa e o README em português.
 - [x] Status público dos READMEs: capacidades concluídas de publicação idempotente, enquadramento facial e legendas estilizadas foram movidas para o núcleo; a seção de consolidação ficou restrita às pendências corporativas, operacionais e arquiteturais.
 - [x] Validação pública com mídia real: publicação recorrente de Shorts no canal confirmou a operação real de renderização, revisão, upload e agendamento; o README mantém apenas riscos residuais de concorrência, recuperação, backup e health checks.
+- [x] Status arquitetural dos READMEs: a modularização por domínios e o isolamento por perfil/canal foram reconhecidos como capacidades existentes; permanecem como consolidação apenas a extração completa das fronteiras e o multi-tenant estrutural com RBAC/auditoria.
 - [x] Notificações: limpar lidas remove os itens em tempo real do painel, atualiza o contador e mantém a exclusão persistida.
 - [x] Notificações: botão `Ler todas` marca todas as notificações não lidas do perfil ativo em uma única operação e atualiza o contador do painel.
 - [x] Biblioteca: análise manual individual com fila, progresso, ETA e notificações de conclusão ou falha.

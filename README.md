@@ -84,14 +84,14 @@ flowchart LR
 
 Análise de canal, transcrição, perfil semântico, Radar, dossiê editorial, curadoria de cortes, renderização vertical, revisão manual, metadados, operação com mídia real e publicação e agendamento idempotentes.
 
-O renderizador também oferece enquadramento facial inteligente com MediaPipe, classificação de planos e Active Speaker Tracking. Planos amplos ou rostos pequenos usam composição vertical de fallback. Legendas estilizadas por corte podem ser configuradas, pré-visualizadas e renderizadas no MP4.
+O renderizador também oferece enquadramento facial inteligente com MediaPipe, classificação de planos e Active Speaker Tracking. Planos amplos ou rostos pequenos usam composição vertical de fallback. Legendas estilizadas por corte podem ser configuradas, pré-visualizadas e renderizadas no MP4. A arquitetura já é modular por domínios, com repositories, providers e executor de tarefas, e o isolamento por perfil/canal cobre dados, mídia, jobs e rotas.
 
 ### Em consolidação
 
-- isolamento estrutural completo por tenant;
+- isolamento multi-tenant completo, além do isolamento por perfil/canal já existente;
 - RBAC e auditoria corporativa;
 - métricas e health checks de providers;
-- modularização progressiva do backend e frontend.
+- extração completa dos handlers HTTP e dos clientes/renderizadores do frontend, pois a modularização por domínios já está em uso.
 
 ## Execução local
 

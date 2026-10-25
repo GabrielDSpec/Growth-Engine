@@ -84,14 +84,14 @@ flowchart LR
 
 Channel analysis, transcription, semantic profiling, Radar, editorial dossiers, cut curation, vertical rendering, human review, metadata, real-media operation, and idempotent publishing and scheduling.
 
-The renderer also provides MediaPipe intelligent facial framing, shot classification, and Active Speaker Tracking. Wide shots or very small faces use an intentional vertical fallback composition. Styled captions per cut can be configured, previewed, and rendered into the MP4.
+The renderer also provides MediaPipe intelligent facial framing, shot classification, and Active Speaker Tracking. Wide shots or very small faces use an intentional vertical fallback composition. Styled captions per cut can be configured, previewed, and rendered into the MP4. The architecture is already modular by domain, with repositories, providers, and a task executor, and profile/channel isolation covers data, media, jobs, and routes.
 
 ### Being consolidated
 
-- complete structural tenant isolation;
+- complete multi-tenant isolation beyond the existing profile/channel isolation;
 - corporate RBAC and auditing;
 - provider metrics and health checks;
-- progressive backend and frontend modularization.
+- complete extraction of HTTP handlers and frontend clients/renderers, since domain modularization is already in use.
 
 ## Local execution
 
