@@ -82,17 +82,16 @@ flowchart LR
 
 ### Core available
 
-Channel analysis, transcription, semantic profiling, Radar, editorial dossiers, cut curation, vertical rendering, human review, metadata, and publishing preparation.
+Channel analysis, transcription, semantic profiling, Radar, editorial dossiers, cut curation, vertical rendering, human review, metadata, idempotent publishing and scheduling, and distribution preparation.
+
+The renderer also provides MediaPipe intelligent facial framing, shot classification, and Active Speaker Tracking. Wide shots or very small faces use an intentional vertical fallback composition. Styled captions per cut can be configured, previewed, and rendered into the MP4.
 
 ### Being consolidated
 
 - complete structural tenant isolation;
 - corporate RBAC and auditing;
 - provider metrics and health checks;
-- complete publishing idempotency;
 - real-media operational validation;
-- more reliable face framing;
-- styled captions per cut;
 - progressive backend and frontend modularization.
 
 ## Local execution
@@ -118,7 +117,7 @@ The project uses Git-ignored local files for credentials, databases, media, cach
 
 ## Quality and security
 
-Tests cover domain contracts, invalid AI responses, the Ollama watchdog, cut timestamps, rendering, OAuth, persistence, XSS, and profile isolation. Production operation still requires controlled validation of publishing, backups, migrations, and real concurrency.
+Tests cover domain contracts, invalid AI responses, the Ollama watchdog, cut timestamps, rendering, OAuth, persistence, idempotent publishing, captions, XSS, and profile isolation. Production operation still requires controlled real-media validation, backups, migrations, and real concurrency.
 
 Credentials, tokens, databases, media, caches, and browser profiles must never be committed. The `.gitignore` contains the standard exclusions for this material.
 

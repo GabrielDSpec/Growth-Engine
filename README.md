@@ -82,17 +82,16 @@ flowchart LR
 
 ### Disponível no núcleo
 
-Análise de canal, transcrição, perfil semântico, Radar, dossiê editorial, curadoria de cortes, renderização vertical, revisão manual, metadados e preparação para publicação.
+Análise de canal, transcrição, perfil semântico, Radar, dossiê editorial, curadoria de cortes, renderização vertical, revisão manual, metadados, publicação e agendamento idempotentes e preparação para distribuição.
+
+O renderizador também oferece enquadramento facial inteligente com MediaPipe, classificação de planos e Active Speaker Tracking. Planos amplos ou rostos pequenos usam composição vertical de fallback. Legendas estilizadas por corte podem ser configuradas, pré-visualizadas e renderizadas no MP4.
 
 ### Em consolidação
 
 - isolamento estrutural completo por tenant;
 - RBAC e auditoria corporativa;
 - métricas e health checks de providers;
-- idempotência completa de publicação;
 - validação operacional com mídia real;
-- enquadramento facial mais confiável;
-- legendas estilizadas por corte;
 - modularização progressiva do backend e frontend.
 
 ## Execução local
@@ -118,7 +117,7 @@ O projeto utiliza arquivos locais ignorados pelo Git para credenciais, bancos, m
 
 ## Qualidade e segurança
 
-Os testes cobrem contratos de domínio, respostas inválidas da IA, watchdog do Ollama, timestamps de cortes, renderização, OAuth, persistência, XSS e isolamento por perfil. A execução em produção ainda exige validação controlada de publicação, backup, migrações e operação com concorrência real.
+Os testes cobrem contratos de domínio, respostas inválidas da IA, watchdog do Ollama, timestamps de cortes, renderização, OAuth, persistência, publicação idempotente, legendas, XSS e isolamento por perfil. A execução em produção ainda exige validação controlada com mídia real, backup, migrações e operação com concorrência real.
 
 Nenhuma credencial, token, banco de dados, mídia, cache ou perfil de navegador deve ser commitado. O `.gitignore` contém as exclusões padrão para esse material.
 
